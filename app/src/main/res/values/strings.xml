@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">异环OCR助手</string>
+    <string name="acc_desc">用于截取游戏画面识别驱动块属性。所有数据仅保存在本机。</string>
+</resources>
