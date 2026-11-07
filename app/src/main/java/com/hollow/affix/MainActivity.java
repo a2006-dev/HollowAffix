@@ -45,7 +45,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        ruleSet = RuleSet.loadBuiltin(this);
+        ruleSet = RuleSet.load(this);
         buildUI();
     }
 
@@ -70,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
         // ===== 当前规则卡片 =====
         LinearLayout ruleCard = card(C_CARD, 16);
         ruleCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        ruleCard.setOnClickListener(v -> openRuleManager());
 
         LinearLayout ruleHead = new LinearLayout(this);
         ruleHead.setOrientation(LinearLayout.HORIZONTAL);
@@ -82,13 +83,27 @@ public class MainActivity extends AppCompatActivity {
         TextView badge = tv("内置", 10, C_ACCENT, false);
         badge.setBackground(bg("#207C4DFF", 6, C_ACCENT));
         badge.setPadding(dp(8), dp(2), dp(8), dp(2));
+        badge.setTag("badge");
         ruleHead.addView(badge);
+
+        TextView arrow = tv("  规则 ›", 11, C_ACCENT, false);
+        ruleHead.addView(arrow);
 
         ruleCard.addView(ruleHead);
 
         tvRuleName = tv(ruleSet.name, 18, C_ACCENT, true);
         tvRuleName.setPadding(0, dp(6), 0, dp(2));
         ruleCard.addView(tvRuleName);
+
+        // 徽章：外部规则显示「自定义」，否则「内置」
+        View badgeV = ruleHead.findViewWithTag("badge");
+        if (badgeV instanceof TextView) {
+            boolean custom = !RuleStore.currentRule(RuleStore.TYPE_DRIVE).isEmpty();
+            ((TextView) badgeV).setText(custom ? "自定义" : "内置");
+            ((TextView) badgeV).setTextColor(Color.parseColor(custom ? C_OK : C_ACCENT));
+            badgeV.setBackground(bg(custom ? "#204ADE80" : "#207C4DFF", 6,
+                    custom ? C_OK : C_ACCENT));
+        }
 
         StringBuilder info = new StringBuilder();
         if (!ruleSet.author.isEmpty()) info.append("作者 ").append(ruleSet.author).append("  ·  ");
@@ -253,6 +268,22 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         refresh();
+    }
+
+    // ==================== 规则管理 ====================
+
+    /** 打开规则管理页 */
+    private void openRuleManager() {
+        setContentView(new RuleManagerView(this,
+                () -> {
+                    // 关闭：回到主界面
+                    buildUI();
+                },
+                () -> {
+                    // 规则变更：重载当前规则，悬浮窗若开着也立即生效
+                    ruleSet = RuleSet.load(this);
+                    if (fw != null) fw.reloadRules();
+                }));
     }
 
     // ==================== 自动操作卡片 ====================
