@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 规则导出目录：/sdcard/HollowAffix/export/ -->
+    <external-path
+        name="hollow_export"
+        path="HollowAffix/export/" />
+    <!-- 兜底：整个外部存储 -->
+    <external-path
+        name="hollow_root"
+        path="HollowAffix/" />
+    <!-- App 私有外部目录（无文件权限时的回退位置） -->
+    <external-files-path
+        name="hollow_files"
+        path="." />
+</paths>
