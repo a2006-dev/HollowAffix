@@ -117,6 +117,17 @@ public class CassetteRule {
         }
     }
 
+    /**
+     * 加载当前生效的空幕规则：外部文件优先，读不到用 assets 内置。
+     */
+    public static CassetteRule load(android.content.Context ctx) {
+        String json = RuleStore.loadJson(ctx, RuleStore.TYPE_CASSETTE);
+        if (json != null && !json.trim().isEmpty()) {
+            return parse(json);
+        }
+        return loadBuiltin(ctx);
+    }
+
     public static CassetteRule parse(String json) {
         CassetteRule cr = new CassetteRule();
         try {
@@ -626,5 +637,149 @@ public class CassetteRule {
             if (v != null && v > max) max = v;
         }
         return w * 2 >= max ? COLOR_HIGH : COLOR_NORMAL;
+    }
+
+    // ==================== 导出 ====================
+
+    /** 序列化为 JSON 文本 */
+    public String toJson() {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("name", name);
+            o.put("author", author);
+            o.put("version", version);
+            o.put("description", description);
+            o.put("doubleCritBonus", doubleCritBonus);
+
+            org.json.JSONArray marr = new org.json.JSONArray();
+            for (String s : mainAffixes) marr.put(s);
+            o.put("mainAffixes", marr);
+
+            org.json.JSONArray sarr = new org.json.JSONArray();
+            for (String s : subAffixes) sarr.put(s);
+            o.put("subAffixes", sarr);
+
+            org.json.JSONArray garr = new org.json.JSONArray();
+            for (Grade g : grades) {
+                org.json.JSONObject go = new org.json.JSONObject();
+                go.put("name", g.name);
+                go.put("ratio", g.ratio);
+                go.put("color", g.color);
+                garr.put(go);
+            }
+            o.put("grades", garr);
+
+            org.json.JSONObject c = new org.json.JSONObject();
+            for (Map.Entry<String, String> e : colors.entrySet()) {
+                c.put(e.getKey(), e.getValue());
+            }
+            o.put("colors", c);
+
+            org.json.JSONObject po = new org.json.JSONObject();
+            for (Map.Entry<String, Profile> e : profiles.entrySet()) {
+                Profile p = e.getValue();
+                org.json.JSONObject pj = new org.json.JSONObject();
+                pj.put("label", p.label);
+                pj.put("maxTotal", p.maxTotal);
+
+                org.json.JSONObject mw = new org.json.JSONObject();
+                for (Map.Entry<String, Integer> w : p.mainWeights.entrySet()) {
+                    mw.put(w.getKey(), w.getValue() == null ? 0 : w.getValue());
+                }
+                pj.put("mainWeights", mw);
+
+                org.json.JSONObject sw = new org.json.JSONObject();
+                for (Map.Entry<String, Integer> w : p.subWeights.entrySet()) {
+                    sw.put(w.getKey(), w.getValue() == null ? 0 : w.getValue());
+                }
+                pj.put("subWeights", sw);
+
+                po.put(e.getKey(), pj);
+            }
+            o.put("profiles", po);
+
+            org.json.JSONArray sdArr = new org.json.JSONArray();
+            for (SetDetail d : setDetails.values()) {
+                org.json.JSONObject so = new org.json.JSONObject();
+                so.put("name", d.name);
+                if (!d.aliases.isEmpty()) {
+                    org.json.JSONArray a = new org.json.JSONArray();
+                    for (String s : d.aliases) a.put(s);
+                    so.put("aliases", a);
+                }
+                so.put("element", d.element);
+                so.put("type", d.type);
+                so.put("profile", d.profile);
+                so.put("matchElement", d.matchElement == null ? "" : d.matchElement);
+                so.put("two", d.two);
+                so.put("four", d.four);
+                so.put("note", d.note);
+                sdArr.put(so);
+            }
+            o.put("setDetails", sdArr);
+
+            return o.toString(2);
+        } catch (Throwable e) {
+            Logger.appendTo("trace.txt", "空幕规则序列化失败: " + e);
+            return "{}";
+        }
+    }
+
+    /** 深拷贝，供编辑使用 */
+    public CassetteRule copy() {
+        CassetteRule cr = new CassetteRule();
+        cr.name = name;
+        cr.author = author;
+        cr.version = version;
+        cr.description = description;
+        cr.doubleCritBonus = doubleCritBonus;
+        cr.mainAffixes.addAll(mainAffixes);
+        cr.subAffixes.addAll(subAffixes);
+        for (Map.Entry<String, String> e : colors.entrySet()) {
+            cr.colors.put(e.getKey(), e.getValue());
+        }
+        for (Grade g : grades) {
+            Grade n = new Grade();
+            n.name = g.name;
+            n.ratio = g.ratio;
+            n.color = g.color;
+            cr.grades.add(n);
+        }
+        for (Map.Entry<String, Profile> e : profiles.entrySet()) {
+            Profile p = e.getValue();
+            Profile n = new Profile();
+            n.name = p.name;
+            n.label = p.label;
+            n.maxTotal = p.maxTotal;
+            n.mainWeights.putAll(p.mainWeights);
+            n.subWeights.putAll(p.subWeights);
+            cr.profiles.put(e.getKey(), n);
+        }
+        for (Map.Entry<String, SetDetail> e : setDetails.entrySet()) {
+            SetDetail d = e.getValue();
+            SetDetail n = new SetDetail();
+            n.name = d.name;
+            n.aliases.addAll(d.aliases);
+            n.element = d.element;
+            n.type = d.type;
+            n.profile = d.profile;
+            n.matchElement = d.matchElement;
+            n.two = d.two;
+            n.four = d.four;
+            n.note = d.note;
+            cr.setDetails.put(e.getKey(), n);
+            if (!cr.sets.contains(n.name)) cr.sets.add(n.name);
+        }
+        return cr;
+    }
+
+    /** 固定主属性列表（15 项） */
+    public static List<String> mainAffixList() {
+        return defaultRule().mainAffixes;
+    }
+
+    /** 固定副属性列表（11 项） */
+    public static List<String> subAffixList() {
+        return defaultRule().subAffixes;
     }
 }
