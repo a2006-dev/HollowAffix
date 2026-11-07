@@ -214,4 +214,28 @@ public class RuleSet {
         String c = colors.get(grade);
         return c != null ? c : "#AAAAAA";
     }
+
+    // ==================== 词条着色 ====================
+
+    /** 金色：权重达最高值一半以上 */
+    public static final String COLOR_HIGH = "#FFB300";
+    /** 白色：其余词条 */
+    public static final String COLOR_NORMAL = "#E8EAED";
+
+    /**
+     * 按权重给词条着色，只分两档：
+     *   权重 >= 最高权重 / 2  → 金色
+     *   其余                  → 白色
+     */
+    public String colorForAffix(String affix) {
+        if (affix == null) return COLOR_NORMAL;
+        Integer w = weights.get(affix);
+        if (w == null || w <= 0) return COLOR_NORMAL;
+
+        int max = 1;
+        for (Integer v : weights.values()) {
+            if (v != null && v > max) max = v;
+        }
+        return w * 2 >= max ? COLOR_HIGH : COLOR_NORMAL;
+    }
 }
