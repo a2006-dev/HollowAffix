@@ -67,6 +67,19 @@ public class RuleSet {
         }
     }
 
+    /**
+     * 加载当前生效的规则：外部文件优先，读不到用 assets 内置。
+     */
+    public static RuleSet load(Context ctx) {
+        String json = RuleStore.loadJson(ctx, RuleStore.TYPE_DRIVE);
+        if (json != null && !json.trim().isEmpty()) {
+            RuleSet rs = parse(json);
+            // 解析失败会拿到默认值，名字会变成「通用规则」，这没问题
+            return rs;
+        }
+        return loadBuiltin(ctx);
+    }
+
     private static String readAll(InputStream is) throws Exception {
         BufferedReader br = new BufferedReader(new InputStreamReader(is, "UTF-8"));
         StringBuilder sb = new StringBuilder();
@@ -237,5 +250,110 @@ public class RuleSet {
             if (v != null && v > max) max = v;
         }
         return w * 2 >= max ? COLOR_HIGH : COLOR_NORMAL;
+    }
+
+    // ==================== 导出 ====================
+
+    /** 序列化为 JSON 文本，用于保存 / 导出 */
+    public String toJson() {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("name", name);
+            o.put("author", author);
+            o.put("version", version);
+            o.put("description", description);
+            o.put("doubleCritBonus", doubleCritBonus);
+            o.put("fallback", fallback);
+
+            org.json.JSONObject w = new org.json.JSONObject();
+            for (Map.Entry<String, Integer> e : weights.entrySet()) {
+                w.put(e.getKey(), e.getValue() == null ? 0 : e.getValue());
+            }
+            o.put("weights", w);
+
+            org.json.JSONObject g = new org.json.JSONObject();
+            for (Map.Entry<String, List<String>> e : groups.entrySet()) {
+                org.json.JSONArray arr = new org.json.JSONArray();
+                for (String m : e.getValue()) arr.put(m);
+                g.put(e.getKey(), arr);
+            }
+            o.put("groups", g);
+
+            org.json.JSONArray rulesArr = new org.json.JSONArray();
+            for (Rule r : rules) {
+                org.json.JSONObject ro = new org.json.JSONObject();
+                ro.put("grade", r.grade == null ? "" : r.grade);
+                ro.put("desc", r.desc == null ? "" : r.desc);
+                if (!r.require.isEmpty()) {
+                    org.json.JSONArray a = new org.json.JSONArray();
+                    for (String s : r.require) a.put(s);
+                    ro.put("require", a);
+                }
+                if (!r.requireAny.isEmpty()) {
+                    org.json.JSONArray a = new org.json.JSONArray();
+                    for (String s : r.requireAny) a.put(s);
+                    ro.put("requireAny", a);
+                }
+                if (r.minCount > 0) ro.put("minCount", r.minCount);
+                rulesArr.put(ro);
+            }
+            o.put("rules", rulesArr);
+
+            org.json.JSONObject c = new org.json.JSONObject();
+            for (Map.Entry<String, String> e : colors.entrySet()) {
+                c.put(e.getKey(), e.getValue());
+            }
+            o.put("colors", c);
+
+            return o.toString(2);
+        } catch (Throwable e) {
+            Logger.appendTo("trace.txt", "规则序列化失败: " + e);
+            return "{}";
+        }
+    }
+
+    /** 深拷贝（编辑时用副本，取消不影响原对象） */
+    public RuleSet copy() {
+        RuleSet rs = new RuleSet();
+        rs.name = name;
+        rs.author = author;
+        rs.version = version;
+        rs.description = description;
+        rs.doubleCritBonus = doubleCritBonus;
+        rs.fallback = fallback;
+        rs.weights.putAll(weights);
+        for (Map.Entry<String, List<String>> e : groups.entrySet()) {
+            rs.groups.put(e.getKey(), new ArrayList<>(e.getValue()));
+        }
+        for (Map.Entry<String, String> e : colors.entrySet()) {
+            rs.colors.put(e.getKey(), e.getValue());
+        }
+        for (Rule r : rules) {
+            Rule n = new Rule();
+            n.grade = r.grade;
+            n.desc = r.desc;
+            n.minCount = r.minCount;
+            n.require.addAll(r.require);
+            n.requireAny.addAll(r.requireAny);
+            rs.rules.add(n);
+        }
+        return rs;
+    }
+
+    /** 固定词条列表（驱动块 11 项） */
+    public static List<String> affixList() {
+        List<String> l = new ArrayList<>();
+        l.add("暴击率");
+        l.add("暴击伤害");
+        l.add("攻击力百分比");
+        l.add("通用伤害增强");
+        l.add("攻击力");
+        l.add("生命值百分比");
+        l.add("防御力百分比");
+        l.add("生命值");
+        l.add("防御力");
+        l.add("环合强度");
+        l.add("倾陷强度");
+        return l;
     }
 }
