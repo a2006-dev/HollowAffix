@@ -148,6 +148,10 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // ===== 自动操作 =====
+        section("自动操作");
+        buildAutoCard();
+
         // ===== 操作 =====
         section("操作");
 
@@ -196,7 +200,9 @@ public class MainActivity extends AppCompatActivity {
         sb.append("屏幕 ").append(sz[0]).append(" × ").append(sz[1]);
         sb.append(sz[0] == 3168 && sz[1] == 1440 ? "  ✓ 适配" : "  ⚠ 需调整坐标");
         sb.append('\n');
-        sb.append("识别区域 ").append(RegionStore.describe());
+        sb.append("识别区 ").append(RegionStore.describe(RegionStore.TYPE_SCAN));
+        sb.append("  ·  锁定键 ").append(RegionStore.describe(RegionStore.TYPE_LOCK));
+        sb.append("  ·  弃置键 ").append(RegionStore.describe(RegionStore.TYPE_DISCARD));
         sb.append('\n');
         sb.append("数据目录 ").append(Logger.DIR.getAbsolutePath());
 
@@ -247,6 +253,157 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         refresh();
+    }
+
+    // ==================== 自动操作卡片 ====================
+
+    private LinearLayout autoCard;
+
+    private void buildAutoCard() {
+        AutoRule.sync(ruleSet);
+
+        autoCard = card(C_CARD, 14);
+        autoCard.setPadding(dp(14), dp(12), dp(14), dp(12));
+
+        rebuildAutoRows();
+        container.addView(autoCard, wrapLp(0, 0));
+    }
+
+    private void rebuildAutoRows() {
+        autoCard.removeAllViews();
+
+        // ===== 总开关 =====
+        LinearLayout switchRow = new LinearLayout(this);
+        switchRow.setOrientation(LinearLayout.HORIZONTAL);
+        switchRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        LinearLayout switchCol = new LinearLayout(this);
+        switchCol.setOrientation(LinearLayout.VERTICAL);
+
+        TextView swName = tv("自动化", 14, C_TEXT, true);
+        switchCol.addView(swName);
+
+        TextView swDesc = tv("关闭后悬浮窗不执行任何自动操作", 10, C_SUB, false);
+        swDesc.setPadding(0, dp(2), 0, 0);
+        switchCol.addView(swDesc);
+
+        switchRow.addView(switchCol, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        boolean on = AutoRule.isEnabled();
+        final TextView sw = tv(on ? "已开启" : "已关闭", 11,
+                on ? "#FFFFFF" : C_SUB, true);
+        sw.setGravity(Gravity.CENTER);
+        sw.setPadding(dp(14), dp(7), dp(14), dp(7));
+        sw.setBackground(on
+                ? bg("#CC2E7D32", 8, null)
+                : bg("#1AFFFFFF", 8, "#40FFFFFF"));
+        sw.setOnClickListener(v -> {
+            AutoRule.setEnabled(!AutoRule.isEnabled());
+            rebuildAutoRows();
+        });
+        switchRow.addView(sw);
+
+        autoCard.addView(switchRow);
+
+        // 分隔
+        View sp0 = new View(this);
+        sp0.setBackgroundColor(Color.parseColor("#1AFFFFFF"));
+        LinearLayout.LayoutParams sp0l = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        sp0l.topMargin = dp(12);
+        sp0l.bottomMargin = dp(10);
+        autoCard.addView(sp0, sp0l);
+
+        // ===== 等级勾选（关闭时变灰不可点）=====
+        boolean enabled = AutoRule.isEnabled();
+
+        java.util.Set<String> grades = AutoRule.collectGrades(ruleSet);
+        java.util.Map<String, String> colorMap = new java.util.LinkedHashMap<>();
+        for (String g : grades) colorMap.put(g, ruleSet.colorOf(g));
+
+        // 自动锁定
+        TextView t1 = tv("自动锁定", 13,
+                enabled ? C_TEXT : "#60FFFFFF", true);
+        autoCard.addView(t1);
+        TextView d1 = tv("勾选的等级自动点锁定", 10,
+                enabled ? C_SUB : "#50FFFFFF", false);
+        d1.setPadding(0, dp(2), 0, dp(6));
+        autoCard.addView(d1);
+        autoCard.addView(gradeRow(grades, colorMap, true, enabled));
+
+        // 分隔
+        View sp = new View(this);
+        sp.setBackgroundColor(Color.parseColor("#1AFFFFFF"));
+        LinearLayout.LayoutParams spl = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        spl.topMargin = dp(12);
+        spl.bottomMargin = dp(10);
+        autoCard.addView(sp, spl);
+
+        // 自动弃置
+        TextView t2 = tv("自动弃置", 13,
+                enabled ? C_TEXT : "#60FFFFFF", true);
+        autoCard.addView(t2);
+        TextView d2 = tv("勾选的等级自动点弃置", 10,
+                enabled ? C_SUB : "#50FFFFFF", false);
+        d2.setPadding(0, dp(2), 0, dp(6));
+        autoCard.addView(d2);
+        autoCard.addView(gradeRow(grades, colorMap, false, enabled));
+
+        // 按钮状态
+        StringBuilder st = new StringBuilder();
+        st.append("锁定键 ").append(RegionStore.describe(RegionStore.TYPE_LOCK));
+        st.append("   ·   弃置键 ").append(RegionStore.describe(RegionStore.TYPE_DISCARD));
+        TextView info = tv(st.toString(), 9, C_SUB, false);
+        info.setPadding(0, dp(10), 0, 0);
+        autoCard.addView(info);
+    }
+
+    /** 一行可勾选的等级标签 */
+    private LinearLayout gradeRow(java.util.Set<String> grades,
+                                  java.util.Map<String, String> colors,
+                                  final boolean isLock,
+                                  final boolean enabled) {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.HORIZONTAL);
+        wrap.setPadding(0, 0, 0, 0);
+
+        java.util.Map<String, Boolean> cur = isLock
+                ? AutoRule.getLock() : AutoRule.getDiscard();
+
+        for (final String g : grades) {
+            boolean on = cur.get(g) != null && cur.get(g);
+            String c = colors.get(g);
+            if (c == null) c = C_SUB;
+
+            final TextView chip = tv((on ? "✓ " : "") + g, 11,
+                    !enabled ? "#40FFFFFF" : (on ? "#FFFFFF" : c), on && enabled);
+            chip.setPadding(dp(11), dp(6), dp(11), dp(6));
+            chip.setBackground(!enabled
+                    ? bg("#0DFFFFFF", 8, "#30FFFFFF")
+                    : (on ? bg(c, 8, null) : bg("#1AFFFFFF", 8, c)));
+            chip.setAlpha(enabled ? 1f : 0.5f);
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = dp(7);
+            wrap.addView(chip, lp);
+
+            if (!enabled) continue;   // 关闭时不可点
+
+            chip.setOnClickListener(v -> {
+                boolean now = isLock
+                        ? (AutoRule.getLock().get(g) != null && AutoRule.getLock().get(g))
+                        : (AutoRule.getDiscard().get(g) != null && AutoRule.getDiscard().get(g));
+                boolean next = !now;
+                if (isLock) AutoRule.setLock(g, next);
+                else AutoRule.setDiscard(g, next);
+                rebuildAutoRows();
+            });
+        }
+        return wrap;
     }
 
     // ==================== UI 组件 ====================
