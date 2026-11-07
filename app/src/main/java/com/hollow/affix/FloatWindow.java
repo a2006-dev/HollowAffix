@@ -37,7 +37,7 @@ public class FloatWindow {
     private static final String C_TEXT = "#E8EAED";
     private static final String C_SUB = "#8B95A5";
 
-    private final RuleSet ruleSet;
+    private RuleSet ruleSet;
 
     private Context ctx;
     private WindowManager wm;
@@ -813,7 +813,7 @@ public class FloatWindow {
     private void toggleMode() {
         cassetteMode = !cassetteMode;
         if (cassetteMode && cassetteRule == null) {
-            cassetteRule = CassetteRule.loadBuiltin(ctx);
+            cassetteRule = CassetteRule.load(ctx);
             cassetteReader = new CassetteReader(cassetteRule);
             Logger.i(TAG, "空幕规则加载: " + cassetteRule.name
                     + " 权重档 " + cassetteRule.profiles.size()
@@ -843,6 +843,29 @@ public class FloatWindow {
     public boolean isCassetteMode() { return cassetteMode; }
 
     /**
+     * 重新加载规则（切换规则后调用，立即生效）。
+     * 已打开的悬浮窗不需要关闭重开。
+     */
+    public void reloadRules() {
+        if (ctx == null) return;
+        // 驱动块规则
+        ruleSet = RuleSet.load(ctx);
+        // 空幕规则
+        if (cassetteMode) {
+            cassetteRule = CassetteRule.load(ctx);
+            cassetteReader = new CassetteReader(cassetteRule);
+        }
+        ui.post(() -> {
+            tvRuleName.setText(cassetteMode
+                    ? (cassetteRule != null ? cassetteRule.name : "空幕")
+                    : ruleSet.name);
+            lastSig = null;
+        });
+        Logger.i(TAG, "规则已重载: 驱动块=" + ruleSet.name
+                + (cassetteMode ? " 空幕=" + (cassetteRule == null ? "-" : cassetteRule.name) : ""));
+    }
+
+    /**
      * 空幕单轮识别：读主属性 + 4 副属性 + 套装名，打分评级。
      * 不做自动点击（空幕面板没有锁定/弃置逻辑）。
      */
@@ -853,7 +876,7 @@ public class FloatWindow {
             return;
         }
         if (cassetteReader == null) {
-            cassetteRule = CassetteRule.loadBuiltin(ctx);
+            cassetteRule = CassetteRule.load(ctx);
             cassetteReader = new CassetteReader(cassetteRule);
         }
 
