@@ -1,0 +1,92 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.hollow.affix'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.hollow.affix"
+        minSdk 29
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    signingConfigs {
+        release {
+            // 签名信息从 keystore.properties 读取（该文件不进 git）
+            def ksProps = new Properties()
+            def ksFile = rootProject.file('keystore.properties')
+            if (ksFile.exists()) {
+                ksProps.load(new FileInputStream(ksFile))
+                storeFile file(ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+                storeType "PKCS12"
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            buildConfigField "boolean", "DEBUG_SHOT", "true"
+        }
+        release {
+            minifyEnabled false
+            buildConfigField "boolean", "DEBUG_SHOT", "false"
+            // 有 keystore.properties 才用 release 签名
+            if (rootProject.file('keystore.properties').exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    aaptOptions {
+        noCompress 'onnx', 'bin', 'txt'
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.16.3'
+}
+
+configurations.all {
+    resolutionStrategy {
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+        eachDependency { details ->
+            if (details.requested.group == 'org.jetbrains.kotlin') {
+                if (details.requested.name == 'kotlin-stdlib-jdk7'
+                        || details.requested.name == 'kotlin-stdlib-jdk8') {
+                    details.useTarget('org.jetbrains.kotlin:kotlin-stdlib:1.8.22')
+                }
+            }
+        }
+    }
+}
