@@ -2,115 +2,81 @@ package com.hollow.affix;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
- * 坐标采集覆盖层：全屏透明 View，记录触摸点坐标。
- * 仿开发者选项的「指针位置」，但会保存到文件。
- * 支持：单击记录点 / 长按开始框选（记录矩形区域）
+ * 坐标采集覆盖层 + 放大镜
+ *
+ * 拖框时在屏幕上方显示放大镜，实时显示手指附近的画面（放大 3 倍），
+ * 解决小按钮被手指挡住、看不清框到哪里的问题。
  */
 @SuppressLint("ViewConstructor")
 public class CollectOverlay extends View {
 
     public interface Listener {
-        void onTap(int x, int y);
         void onRegion(Rect r);
     }
 
-    private final Paint dotPaint = new Paint();
+    private static final int ZOOM = 3;
+    private static final int LENS_SRC = 60;
+    private static final int LENS_SIZE = LENS_SRC * ZOOM;
+
     private final Paint crossPaint = new Paint();
     private final Paint textPaint = new Paint();
     private final Paint regionPaint = new Paint();
     private final Paint regionStroke = new Paint();
+    private final Paint lensBorder = new Paint();
+    private final Paint lensBg = new Paint();
 
-    private final List<int[]> dots = new ArrayList<>();  // {x,y}
-    private final List<Rect> regions = new ArrayList<>();
+    private Bitmap snapshot;
+    private RectF lensRect;
 
     private float downX, downY, curX, curY;
     private boolean down = false, dragging = false;
-    private long downTime = 0;
     private Listener listener;
-
-    private static final long LONG_PRESS_MS = 400;
 
     public CollectOverlay(Context ctx) {
         super(ctx);
-        dotPaint.setColor(Color.parseColor("#FF3D7EFF"));
-        dotPaint.setStyle(Paint.Style.STROKE);
-        dotPaint.setStrokeWidth(3f);
-        dotPaint.setAntiAlias(true);
 
         crossPaint.setColor(Color.parseColor("#FF3D7EFF"));
         crossPaint.setStrokeWidth(2f);
         crossPaint.setAntiAlias(true);
 
         textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(34f);
+        textPaint.setTextSize(30f);
         textPaint.setAntiAlias(true);
-        textPaint.setShadowLayer(4f, 0f, 0f, Color.BLACK);
+        textPaint.setShadowLayer(5f, 0f, 0f, Color.BLACK);
 
-        regionPaint.setColor(Color.parseColor("#333D7EFF"));
+        regionPaint.setColor(Color.parseColor("#2A3D7EFF"));
         regionPaint.setStyle(Paint.Style.FILL);
 
         regionStroke.setColor(Color.parseColor("#FFFFD54F"));
         regionStroke.setStyle(Paint.Style.STROKE);
         regionStroke.setStrokeWidth(3f);
+        regionStroke.setAntiAlias(true);
+
+        lensBorder.setColor(Color.parseColor("#FF7C4DFF"));
+        lensBorder.setStyle(Paint.Style.STROKE);
+        lensBorder.setStrokeWidth(4f);
+        lensBorder.setAntiAlias(true);
+
+        lensBg.setColor(Color.parseColor("#FF0A0E14"));
+        lensBg.setStyle(Paint.Style.FILL);
     }
 
-    public void setListener(Listener l) { this.listener = l; }
-
-    public void clear() {
-        dots.clear();
-        regions.clear();
+    public void setSnapshot(Bitmap bmp) {
+        this.snapshot = bmp;
         invalidate();
     }
 
-    public int dotCount() { return dots.size(); }
-    public int regionCount() { return regions.size(); }
-
-    @Override
-    protected void onDraw(Canvas c) {
-        super.onDraw(c);
-
-        for (int[] d : dots) {
-            c.drawCircle(d[0], d[1], 18f, dotPaint);
-            c.drawLine(d[0] - 26, d[1], d[0] + 26, d[1], crossPaint);
-            c.drawLine(d[0], d[1] - 26, d[0], d[1] + 26, crossPaint);
-            c.drawText("(" + d[0] + "," + d[1] + ")", d[0] + 26, d[1] - 22, textPaint);
-        }
-
-        for (Rect r : regions) {
-            c.drawRect(r, regionPaint);
-            c.drawRect(r, regionStroke);
-            c.drawText(r.left + "," + r.top + "  " + r.width() + "x" + r.height(),
-                    r.left + 8, r.top - 8, textPaint);
-        }
-
-        // 拖动中的实时框
-        if (down && dragging) {
-            Rect r = makeRect(downX, downY, curX, curY);
-            c.drawRect(r, regionPaint);
-            c.drawRect(r, regionStroke);
-            c.drawText(r.left + "," + r.top + "  " + r.width() + "x" + r.height(),
-                    r.left + 8, r.top - 8, textPaint);
-        }
-
-        // 十字准星（跟随手指）
-        if (down) {
-            c.drawLine(0, curY, getWidth(), curY, crossPaint);
-            c.drawLine(curX, 0, curX, getHeight(), crossPaint);
-            c.drawText("x=" + (int) curX + "  y=" + (int) curY,
-                    curX + 24, curY - 24, textPaint);
-        }
-    }
+    public void setListener(Listener l) { this.listener = l; }
 
     private Rect makeRect(float x1, float y1, float x2, float y2) {
         return new Rect(Math.round(Math.min(x1, x2)), Math.round(Math.min(y1, y2)),
@@ -118,9 +84,77 @@ public class CollectOverlay extends View {
     }
 
     @Override
+    protected void onDraw(Canvas c) {
+        super.onDraw(c);
+
+        if (down) {
+            Rect r = makeRect(downX, downY, curX, curY);
+            c.drawRect(r, regionPaint);
+            c.drawRect(r, regionStroke);
+
+            String size = r.width() + " x " + r.height();
+            c.drawText(size, r.left + 8, r.top - 10, textPaint);
+
+            int cx = r.centerX(), cy = r.centerY();
+            String center = "(" + cx + ", " + cy + ")";
+            c.drawText(center, r.left + 8, r.bottom + 34, textPaint);
+
+            c.drawLine(0, curY, getWidth(), curY, crossPaint);
+            c.drawLine(curX, 0, curX, getHeight(), crossPaint);
+
+            drawLens(c);
+        }
+    }
+
+    private void drawLens(Canvas c) {
+        // 放大镜外框始终绘制（即使快照未就绪）
+        float lensX = getWidth() / 2f - LENS_SIZE / 2f;
+        float lensY = 70f;
+        lensRect = new RectF(lensX, lensY, lensX + LENS_SIZE, lensY + LENS_SIZE);
+
+        c.drawRect(lensRect, lensBg);
+
+        if (snapshot != null) {
+            int half = LENS_SRC / 2;
+            int sx = Math.round(curX) - half;
+            int sy = Math.round(curY) - half;
+            sx = Math.max(0, Math.min(sx, snapshot.getWidth() - LENS_SRC));
+            sy = Math.max(0, Math.min(sy, snapshot.getHeight() - LENS_SRC));
+
+            Rect src = new Rect(sx, sy, sx + LENS_SRC, sy + LENS_SRC);
+
+            c.save();
+            c.clipRect(lensRect);
+            c.drawBitmap(snapshot, src, lensRect, null);
+            c.restore();
+        } else {
+            // 快照未就绪：显示提示
+            Paint tp = new Paint(textPaint);
+            tp.setTextSize(24f);
+            tp.setTextAlign(Paint.Align.CENTER);
+            c.drawText("快照加载中…", lensRect.centerX(),
+                    lensRect.centerY() + 8, tp);
+        }
+
+        c.drawRect(lensRect, lensBorder);
+
+        float ccx = lensRect.centerX();
+        float ccy = lensRect.centerY();
+        Paint p = new Paint(crossPaint);
+        p.setColor(Color.parseColor("#FFFFD54F"));
+        p.setStrokeWidth(3f);
+        c.drawLine(ccx - 20, ccy, ccx + 20, ccy, p);
+        c.drawLine(ccx, ccy - 20, ccx, ccy + 20, p);
+
+        String coord = "(" + Math.round(curX) + ", " + Math.round(curY) + ")";
+        c.drawText(coord, lensRect.left + 10, lensRect.bottom + 32, textPaint);
+    }
+
+    @Override
     public boolean onTouchEvent(MotionEvent e) {
-        curX = e.getX();
-        curY = e.getY();
+        // 用 raw 坐标（屏幕绝对），避免窗口内边距导致偏移
+        curX = e.getRawX();
+        curY = e.getRawY();
 
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
@@ -128,12 +162,11 @@ public class CollectOverlay extends View {
                 dragging = false;
                 downX = curX;
                 downY = curY;
-                downTime = System.currentTimeMillis();
                 invalidate();
                 return true;
 
             case MotionEvent.ACTION_MOVE:
-                if (down && Math.hypot(curX - downX, curY - downY) > 40f) {
+                if (down && Math.hypot(curX - downX, curY - downY) > 30f) {
                     dragging = true;
                 }
                 invalidate();
@@ -143,20 +176,13 @@ public class CollectOverlay extends View {
                 down = false;
                 if (dragging) {
                     Rect r = makeRect(downX, downY, curX, curY);
-                    if (r.width() > 40 && r.height() > 40) {
-                        regions.add(r);
+                    if (r.width() > 15 && r.height() > 15) {
                         if (listener != null) listener.onRegion(r);
-                        Logger.appendTo("regions.txt",
-                                String.format("区域\t%d\t%d\t%d\t%d\t宽%d\t高%d",
+                        Logger.appendTo("region.txt",
+                                String.format("框选\t%d\t%d\t%d\t%d\t宽%d\t高%d",
                                         r.left, r.top, r.right, r.bottom,
                                         r.width(), r.height()));
                     }
-                } else {
-                    int x = Math.round(downX), y = Math.round(downY);
-                    dots.add(new int[]{x, y});
-                    if (listener != null) listener.onTap(x, y);
-                    Logger.appendTo("taps.txt",
-                            String.format("点击\t%d\t%d", x, y));
                 }
                 dragging = false;
                 invalidate();
