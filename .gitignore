@@ -1,0 +1,34 @@
+# Gradle
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+
+# IDE
+.idea/
+.androidide/
+.vscode/
+
+# Android
+*.apk
+*.aab
+app/release/
+app/debug/
+
+# ===== 签名文件（绝对不要提交）=====
+*.jks
+*.keystore
+*.p12
+keystore.properties
+release-signing.properties
+signing.properties
+
+# 临时文件
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# 模型文件（太大，用 Git LFS 或单独提供）
+app/src/main/assets/*.onnx
