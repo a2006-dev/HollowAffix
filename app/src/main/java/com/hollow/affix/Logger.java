@@ -10,16 +10,16 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * 统一日志与数据导出。全部落到 /sdcard/HollowProbe/，纯文本，方便直接读取。
+ * 统一日志与数据导出。全部落到 /sdcard/HollowAffix/，纯文本，方便直接读取。
  */
 public class Logger {
 
-    // 优先用 /sdcard/HollowProbe（有「所有文件访问」权限时最方便读取）
+    // 优先用 /sdcard/HollowAffix（有「所有文件访问」权限时最方便读取）
     // 没有权限时退回 App 私有外部目录，保证一定能写
     public static final File DIR = resolveDir();
 
     private static File resolveDir() {
-        File primary = new File(Environment.getExternalStorageDirectory(), "HollowProbe");
+        File primary = new File(Environment.getExternalStorageDirectory(), "HollowAffix");
         try {
             if (primary.exists() || primary.mkdirs()) {
                 // 验证真的可写
@@ -35,7 +35,7 @@ public class Logger {
         File fallback = null;
         try {
             File ext = ContextHolder.get().getExternalFilesDir(null);
-            if (ext != null) fallback = new File(ext, "HollowProbe");
+            if (ext != null) fallback = new File(ext, "HollowAffix");
         } catch (Throwable ignored) {
         }
         if (fallback == null) fallback = primary;
