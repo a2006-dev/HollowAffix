@@ -48,10 +48,16 @@ public class FloatWindow {
 
     private TextView tvRuleName;     // 顶部规则名
     private TextView tvStatus;
-    private TextView btnStart, btnPause, btnSelect, btnFold;
+    private TextView btnStart, btnPause, btnSelect, btnFold, btnMode;
     private TextView tvGrade, tvScore, tvReason;
     private TextView[] tvAffix = new TextView[4];
     private LinearLayout bodyBox;
+
+    /** 空幕模式控制器 */
+    private CassetteRule cassetteRule;
+    private CassetteReader cassetteReader;
+    /** 当前模式：false=驱动块，true=空幕 */
+    private volatile boolean cassetteMode = false;
 
     private boolean folded = false;
     private boolean running = false;
@@ -100,6 +106,12 @@ public class FloatWindow {
         tvRuleName.setEllipsize(android.text.TextUtils.TruncateAt.END);
         bar.addView(tvRuleName, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // 模式切换：驱动块 / 空幕
+        btnMode = miniBtn("块");
+        btnMode.setTextColor(Color.parseColor("#FFD54F"));
+        btnMode.setOnClickListener(v -> toggleMode());
+        bar.addView(btnMode);
 
         btnFold = miniBtn("─");
         btnFold.setOnClickListener(v -> toggleFold());
@@ -292,6 +304,8 @@ public class FloatWindow {
         sec1.setPadding(0, dp(4), 0, dp(4));
         sec1.addView(regionRow("识别区域", "属性面板 OCR 范围",
                 RegionStore.TYPE_SCAN));
+        sec1.addView(regionRow("空幕面板", "卡带详情 主/副属性范围",
+                RegionStore.TYPE_CASSETTE));
         panel.addView(sec1);
 
         // ===== 分区 2：自动化（抽屉）=====
@@ -424,8 +438,10 @@ public class FloatWindow {
         });
         row.addView(btn);
 
-        // 测试按钮（仅锁定/弃置）
-        if (type != RegionStore.TYPE_SCAN) {
+        // 测试按钮（仅驱动块的锁定/弃置按钮）
+        boolean isBtn = (type == RegionStore.TYPE_LOCK)
+                || (type == RegionStore.TYPE_DISCARD);
+        if (isBtn) {
             TextView test = tv("测试", 9, "#4ADE80", false);
             test.setPadding(dp(9), dp(4), dp(9), dp(4));
             test.setBackground(bg("#1A4ADE80", 6, "#704ADE80"));
@@ -456,19 +472,20 @@ public class FloatWindow {
 
         // 已有值时显示恢复/清除按钮
         if (RegionStore.has(type)) {
-            boolean isScan = (type == RegionStore.TYPE_SCAN);
-            TextView op = tv(isScan ? "恢复默认" : "清除", 9,
-                    isScan ? "#FFB300" : "#F87171", false);
+            // 识别区与空幕面板都有默认值；锁定/弃置按钮叫「清除」
+            boolean hasDefault = !isBtn;
+            TextView op = tv(hasDefault ? "恢复默认" : "清除", 9,
+                    hasDefault ? "#FFB300" : "#F87171", false);
             op.setPadding(dp(9), dp(4), dp(9), dp(4));
-            op.setBackground(bg(isScan ? "#1AFFB300" : "#1AF87171", 6,
-                    isScan ? "#70FFB300" : "#70F87171"));
+            op.setBackground(bg(hasDefault ? "#1AFFB300" : "#1AF87171", 6,
+                    hasDefault ? "#70FFB300" : "#70F87171"));
             LinearLayout.LayoutParams ol = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             ol.leftMargin = dp(5);
             op.setOnClickListener(v -> {
                 RegionStore.clear(type);
-                toast(isScan ? "识别区已恢复默认" : "已清除");
+                toast(hasDefault ? (RegionStore.nameOf(type) + "已恢复默认") : "已清除");
                 // 重建面板以刷新显示
                 try {
                     ViewGroup pp = (ViewGroup) row.getParent().getParent();
@@ -584,7 +601,11 @@ public class FloatWindow {
                 round++;
                 long t0 = System.currentTimeMillis();
                 try {
-                    tick(round);
+                    if (cassetteMode) {
+                        tickCassette(round);
+                    } else {
+                        tick(round);
+                    }
                 } catch (Throwable e) {
                     Logger.appendTo("trace.txt", "r" + round + " 异常: " + e);
                 }
@@ -731,8 +752,14 @@ public class FloatWindow {
         final int score = rs.score;
         final String reason = rs.reason;
         final String[] affixStr = new String[4];
+        final int[] affixColors = new int[4];
+        final int cNormal = Color.parseColor(RuleSet.COLOR_NORMAL);
         for (int i = 0; i < 4; i++) {
             affixStr[i] = i < pretty.size() ? "· " + pretty.get(i) : "· —";
+            // names 与 pretty 一一对应，按标准词条名查权重着色
+            affixColors[i] = i < names.size()
+                    ? Color.parseColor(ruleSet.colorForAffix(names.get(i)))
+                    : cNormal;
         }
         final int roundNo = round;
         final long cost = System.currentTimeMillis() - t0;
@@ -743,7 +770,10 @@ public class FloatWindow {
             tvGrade.setTextColor(Color.parseColor(color));
             tvScore.setText(score + "分");
             tvReason.setText(reason);
-            for (int i = 0; i < 4; i++) tvAffix[i].setText(affixStr[i]);
+            for (int i = 0; i < 4; i++) {
+                tvAffix[i].setText(affixStr[i]);
+                tvAffix[i].setTextColor(affixColors[i]);
+            }
             // 点击时保留点击提示，不覆盖
             if (!tapped) {
                 tvStatus.setText(roundNo + "轮 " + cost + "ms");
@@ -775,6 +805,204 @@ public class FloatWindow {
         bodyBox.setVisibility(folded ? View.GONE : View.VISIBLE);
         tvStatus.setVisibility(folded ? View.GONE : View.VISIBLE);
         btnFold.setText(folded ? "□" : "─");
+    }
+
+    // ==================== 模式切换 ====================
+
+    /** 驱动块 ⇄ 空幕 切换 */
+    private void toggleMode() {
+        cassetteMode = !cassetteMode;
+        if (cassetteMode && cassetteRule == null) {
+            cassetteRule = CassetteRule.loadBuiltin(ctx);
+            cassetteReader = new CassetteReader(cassetteRule);
+            Logger.i(TAG, "空幕规则加载: " + cassetteRule.name
+                    + " 权重档 " + cassetteRule.profiles.size()
+                    + " 套装 " + cassetteRule.setDetails.size());
+        }
+        ui.post(() -> {
+            btnMode.setText(cassetteMode ? "幕" : "块");
+            tvRuleName.setText(cassetteMode
+                    ? (cassetteRule != null ? cassetteRule.name : "空幕")
+                    : ruleSet.name);
+            setStatus(cassetteMode ? "空幕模式" : "驱动块模式");
+            // 清空上次判定，避免模式切换后残留
+            tvGrade.setText("—");
+            tvGrade.setTextColor(Color.parseColor(C_TEXT));
+            tvScore.setText("");
+            tvReason.setText("");
+            for (int i = 0; i < 4; i++) tvAffix[i].setText("· —");
+            lastSig = null;
+            if (cassetteMode) {
+                toast("空幕模式：对准卡带详情面板");
+            } else {
+                toast("驱动块模式");
+            }
+        });
+    }
+
+    public boolean isCassetteMode() { return cassetteMode; }
+
+    /**
+     * 空幕单轮识别：读主属性 + 4 副属性 + 套装名，打分评级。
+     * 不做自动点击（空幕面板没有锁定/弃置逻辑）。
+     */
+    private void tickCassette(int round) {
+        ProbeService svc = ProbeService.get();
+        if (svc == null) {
+            setStatus("无障碍未连接");
+            return;
+        }
+        if (cassetteReader == null) {
+            cassetteRule = CassetteRule.loadBuiltin(ctx);
+            cassetteReader = new CassetteReader(cassetteRule);
+        }
+
+        Bitmap bmp = svc.screenshot();
+        if (bmp == null) {
+            setStatus("截屏失败");
+            return;
+        }
+        if (bmp.getWidth() < bmp.getHeight()) {
+            setStatus("请切到游戏");
+            bmp.recycle();
+            return;
+        }
+
+        long t0 = System.currentTimeMillis();
+        int[] region = RegionStore.get(RegionStore.TYPE_CASSETTE);
+        if (region == null) {
+            region = new int[]{RegionStore.CAS_X, RegionStore.CAS_Y,
+                                RegionStore.CAS_W, RegionStore.CAS_H};
+        }
+
+        CassetteReader.Parse p;
+        try {
+            p = cassetteReader.read(ocr, bmp, region);
+        } catch (Throwable e) {
+            Logger.appendTo("trace.txt", "空幕识别异常: " + e);
+            bmp.recycle();
+            setStatus("识别异常");
+            return;
+        }
+        bmp.recycle();
+
+        CassetteRule.Result r = cassetteRule.evaluate(p.mainAffix, p.subs, p.set);
+        long cost = System.currentTimeMillis() - t0;
+
+        // ---- 自动操作（复用驱动块的按钮坐标与 AutoRule 配置）----
+        boolean didTap = false;
+        if (running && AutoRule.anyEnabled()) {
+            int target = -1;
+            String act = "";
+            if (AutoRule.shouldLock(r.grade)) {
+                target = RegionStore.TYPE_LOCK;
+                act = "锁定";
+            } else if (AutoRule.shouldDiscard(r.grade)) {
+                target = RegionStore.TYPE_DISCARD;
+                act = "弃置";
+            }
+            if (target >= 0) {
+                int[] center = RegionStore.center(target);
+                if (center == null) {
+                    final String miss = target == RegionStore.TYPE_LOCK
+                            ? "未框选锁定按钮" : "未框选弃置按钮";
+                    final String fmiss = miss;
+                    ui.post(() -> tvReason.setText(fmiss));
+                    Logger.appendTo("trace.txt", "r" + round + " " + miss);
+                } else {
+                    String sig = r.grade + "|" + String.join(",", p.subs)
+                            + "|" + p.mainAffix;
+                    boolean same = sig.equals(lastSig);
+                    Logger.appendTo("trace.txt", "r" + round + " 空幕准备" + act
+                            + " (" + center[0] + "," + center[1] + ") 评级=" + r.grade
+                            + " 词条=" + p.subs + " same=" + same);
+                    if (!same) {
+                        svc.tap(center[0], center[1]);
+                        lastSig = sig;
+                        didTap = true;
+                        final String fAct = act;
+                        final int[] fc = center;
+                        ui.post(() -> {
+                            tvStatus.setText("▶ 点击" + fAct + " (" + fc[0] + "," + fc[1] + ")");
+                        });
+                        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
+                    }
+                }
+            } else {
+                lastSig = null;
+            }
+        }
+
+        final String grade = r.grade;
+        final String color = r.color;
+        final int total = r.total;
+        final String detail = r.detail;
+        final String mainTxt = p.mainAffix == null ? "主属性未识别"
+                : (p.mainAffix + (p.mainValue.isEmpty() ? "" : " " + p.mainValue));
+        final String setTxt = p.set == null ? "套装未识别" : p.set;
+        final String profileTxt = r.profileName;
+        final boolean elemHit = r.elementMatch;
+        final String[] subStr = new String[4];
+        final int[] subColors = new int[4];
+        final int cNormal = Color.parseColor(CassetteRule.COLOR_NORMAL);
+        // 主属性无效则整件作废，副词条一律白色
+        final boolean mainOk = r.mainScore > 0;
+        for (int i = 0; i < 4; i++) {
+            subStr[i] = i < p.subTexts.size() ? "· " + p.subTexts.get(i) : "· —";
+            subColors[i] = (i < p.subs.size() && mainOk)
+                    ? Color.parseColor(cassetteRule.colorForSub(p.set, p.subs.get(i)))
+                    : cNormal;
+        }
+        final int roundNo = round;
+        final String dbg = p.debug;
+
+        // 套装效果（2件 / 4件）
+        CassetteRule.SetDetail sd = cassetteRule.detail(p.set);
+        final boolean tapped = didTap;
+
+        ui.post(() -> {
+            tvGrade.setText(grade);
+            tvGrade.setTextColor(Color.parseColor(color));
+            tvScore.setText(total + "分");
+            tvReason.setText(setTxt + " · " + profileTxt + " · " + mainTxt
+                    + (elemHit ? " ★" : ""));
+            for (int i = 0; i < 4; i++) {
+                tvAffix[i].setText(subStr[i]);
+                tvAffix[i].setTextColor(subColors[i]);
+            }
+            // 点击时保留点击提示，不覆盖
+            if (!tapped) {
+                tvStatus.setText(roundNo + "轮 " + cost + "ms");
+            }
+            // 折叠态时在状态栏显示套装效果摘要
+            if (folded && sd != null) {
+                tvStatus.setText(sd.element + " · " + sd.type + " · 4件 " + sd.four);
+            }
+        });
+
+        // 落盘
+        StringBuilder sb = new StringBuilder();
+        sb.append("轮次\t").append(round).append('\n');
+        sb.append("模式\t空幕\n");
+        sb.append("套装\t").append(p.set).append('\n');
+        if (sd != null) {
+            sb.append("套装属性\t").append(sd.element).append('\t').append(sd.type).append('\n');
+            sb.append("2件套\t").append(sd.two).append('\n');
+            sb.append("4件套\t").append(sd.four).append('\n');
+            sb.append("备注\t").append(sd.note).append('\n');
+        }
+        sb.append("主属性\t").append(p.mainAffix)
+          .append('\t').append(p.mainValue).append('\n');
+        for (String a : p.subTexts) sb.append("副属性\t").append(a).append('\n');
+        sb.append("得分\t主").append(r.mainScore).append("\t副").append(r.subScore)
+          .append("\t总").append(total).append("/").append(r.maxTotal)
+          .append("\t占比").append(String.format("%.0f%%", r.ratio * 100)).append('\n');
+        sb.append("权重档\t").append(r.profileName)
+          .append("\t本命=").append(r.elementMatch).append('\n');
+        sb.append("判定\t").append(grade).append('\t').append(detail).append('\n');
+        sb.append("耗时\t").append(cost).append("ms\n");
+        sb.append("解析\t").append(dbg).append('\n');
+        Logger.appendTo("cassette.txt", sb.toString());
     }
 
     private void toast(String s) {
