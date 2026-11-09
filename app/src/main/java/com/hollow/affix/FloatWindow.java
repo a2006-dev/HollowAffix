@@ -19,20 +19,17 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 悬浮窗：顶部显示当前规则名，中间显示判定结果与副属性。
- */
 public class FloatWindow {
 
     private static final String TAG = "FLOAT";
 
-    // 配色
-    private static final String C_BG = "#E6101419";      // 92% 透明深色
+    private static final String C_BG = "#E6101419";
     private static final String C_ACCENT = "#7C4DFF";
     private static final String C_TEXT = "#E8EAED";
     private static final String C_SUB = "#8B95A5";
@@ -46,22 +43,31 @@ public class FloatWindow {
     private CollectOverlay overlay;
     private WindowManager.LayoutParams overlayLp;
 
-    private TextView tvRuleName;     // 顶部规则名
+    private TextView tvRuleName;
     private TextView tvStatus;
-    private TextView btnStart, btnPause, btnSelect, btnFold, btnMode;
+    private TextView btnStart, btnPause, btnStop, btnSelect, btnFold;
     private TextView tvGrade, tvScore, tvReason;
     private TextView[] tvAffix = new TextView[4];
     private LinearLayout bodyBox;
 
-    /** 空幕模式控制器 */
     private CassetteRule cassetteRule;
     private CassetteReader cassetteReader;
-    /** 当前模式：false=驱动块，true=空幕 */
-    private volatile boolean cassetteMode = false;
+
+    private boolean autoSwitch = false;
+
+    private AutoRunner autoRunner;
+
+    private AutoRecordView recorder;
+
+    private boolean swipeThenTest = false;
+
+    private TextView tvHint;
 
     private boolean folded = false;
     private boolean running = false;
-    // 上次点击时的卡片签名（评级+词条），用于判断是否换了卡
+
+    private volatile boolean paused = false;
+
     private String lastSig = null;
     private Thread worker;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -84,17 +90,20 @@ public class FloatWindow {
         }
         if (root != null) return;
 
+        if (cassetteRule == null) {
+            cassetteRule = CassetteRule.load(ctx);
+            cassetteReader = new CassetteReader(cassetteRule);
+        }
+
         root = new LinearLayout(ctx);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(9), dp(6), dp(9), dp(7));
         root.setBackground(bg(C_BG, 13, "#2A7C4DFF"));
 
-        // ===== 标题栏：规则名 + 折叠/关闭 =====
         LinearLayout bar = new LinearLayout(ctx);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
 
-        // 左侧色条 + 规则名
         View bar0 = new View(ctx);
         bar0.setBackground(bg(C_ACCENT, 2, null));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(3), dp(13));
@@ -107,12 +116,6 @@ public class FloatWindow {
         bar.addView(tvRuleName, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        // 模式切换：驱动块 / 空幕
-        btnMode = miniBtn("块");
-        btnMode.setTextColor(Color.parseColor("#FFD54F"));
-        btnMode.setOnClickListener(v -> toggleMode());
-        bar.addView(btnMode);
-
         btnFold = miniBtn("─");
         btnFold.setOnClickListener(v -> toggleFold());
         bar.addView(btnFold);
@@ -124,17 +127,14 @@ public class FloatWindow {
         root.addView(bar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(20)));
 
-        // ===== 状态 =====
         tvStatus = tv("就绪", 8, C_SUB, false);
         tvStatus.setSingleLine(true);
         root.addView(tvStatus);
 
-        // ===== 内容区 =====
         bodyBox = new LinearLayout(ctx);
         bodyBox.setOrientation(LinearLayout.VERTICAL);
         bodyBox.setPadding(0, dp(3), 0, 0);
 
-        // 判定结果行：等级 + 分数
         LinearLayout gradeRow = new LinearLayout(ctx);
         gradeRow.setOrientation(LinearLayout.HORIZONTAL);
         gradeRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -148,14 +148,12 @@ public class FloatWindow {
 
         bodyBox.addView(gradeRow);
 
-        // 判定依据
         tvReason = tv("", 8, C_SUB, false);
         tvReason.setSingleLine(true);
         tvReason.setEllipsize(android.text.TextUtils.TruncateAt.END);
         tvReason.setPadding(0, 0, 0, dp(3));
         bodyBox.addView(tvReason);
 
-        // 4 条副属性
         for (int i = 0; i < 4; i++) {
             tvAffix[i] = tv("· —", 9, C_TEXT, false);
             tvAffix[i].setSingleLine(true);
@@ -167,7 +165,6 @@ public class FloatWindow {
 
         root.addView(bodyBox);
 
-        // ===== 按钮行 =====
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(LinearLayout.HORIZONTAL);
 
@@ -183,6 +180,12 @@ public class FloatWindow {
         p2.setMargins(0, dp(4), dp(4), 0);
         btns.addView(btnPause, p2);
 
+        btnStop = chip("停止", "#25FFFFFF");
+        btnStop.setOnClickListener(v -> stopAll());
+        LinearLayout.LayoutParams p2b = new LinearLayout.LayoutParams(0, dp(24), 1f);
+        p2b.setMargins(0, dp(4), dp(4), 0);
+        btns.addView(btnStop, p2b);
+
         btnSelect = chip("设置", "#25FFFFFF");
         btnSelect.setOnClickListener(v -> toggleCollect());
         LinearLayout.LayoutParams p3 = new LinearLayout.LayoutParams(0, dp(24), 1f);
@@ -191,7 +194,14 @@ public class FloatWindow {
 
         root.addView(btns);
 
-        // ===== 窗口参数 =====
+        tvHint = tv("运行中 · 按音量下键暂停", 8, "#4ADE80", false);
+        tvHint.setPadding(0, dp(4), 0, 0);
+        tvHint.setVisibility(View.GONE);
+        root.addView(tvHint);
+
+        ProbeService.setVolumeKeyListener(this::onVolumeDown);
+        loadAutoSwitch();
+
         lp = new WindowManager.LayoutParams();
         lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
         lp.format = PixelFormat.TRANSLUCENT;
@@ -204,7 +214,6 @@ public class FloatWindow {
 
         wm.addView(root, lp);
 
-        // 拖动
         bar.setOnTouchListener(new View.OnTouchListener() {
             float dx, dy;
             @Override
@@ -224,7 +233,6 @@ public class FloatWindow {
             }
         });
 
-        // 保活服务
         try {
             Intent ka = new Intent(ctx, KeepAliveService.class);
             if (android.os.Build.VERSION.SDK_INT >= 26) {
@@ -236,7 +244,6 @@ public class FloatWindow {
 
         Logger.i(TAG, "悬浮窗已显示，规则=" + ruleSet.name);
 
-        // 加载 OCR
         new Thread(() -> {
             ocr.init(ctx);
             ui.post(() -> {
@@ -247,16 +254,23 @@ public class FloatWindow {
     }
 
     public void hide() {
-        pause();
         stopCollect();
+
+        stopAll();
+
+        if (recorder != null) {
+            recorder.stop();
+            recorder = null;
+        }
+
+        ProbeService.setVolumeKeyListener(null);
+        ProbeService.captureVolumeKey = false;
         try { if (root != null) wm.removeView(root); } catch (Exception ignored) {}
         root = null;
+        Logger.flushAll();
         Logger.i(TAG, "悬浮窗已关闭");
     }
 
-    // ==================== 框选 ====================
-
-    /** 当前框选的目标类型 */
     private int collectType = RegionStore.TYPE_SCAN;
 
     private void toggleCollect() {
@@ -269,7 +283,6 @@ public class FloatWindow {
         }
     }
 
-    /** 弹出设置面板 */
     private void showCollectMenu() {
         if (!Settings.canDrawOverlays(ctx)) return;
 
@@ -278,7 +291,13 @@ public class FloatWindow {
         panel.setPadding(dp(10), dp(10), dp(10), dp(10));
         panel.setBackground(bg("#F00D1119", 14, "#507C4DFF"));
 
-        // ===== 标题栏 =====
+        final ScrollView scroller = new ScrollView(ctx);
+        scroller.setVerticalScrollBarEnabled(true);
+        scroller.setFillViewport(false);
+        scroller.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
+        final LinearLayout body = new LinearLayout(ctx);
+        body.setOrientation(LinearLayout.VERTICAL);
+
         LinearLayout head = new LinearLayout(ctx);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -297,31 +316,12 @@ public class FloatWindow {
         panel.addView(head, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
 
-        // ===== 分区 1：框选区域 =====
-        panel.addView(sectionHeader("框选区域", false));
-        LinearLayout sec1 = new LinearLayout(ctx);
-        sec1.setOrientation(LinearLayout.VERTICAL);
-        sec1.setPadding(0, dp(4), 0, dp(4));
-        sec1.addView(regionRow("识别区域", "属性面板 OCR 范围",
+        LinearLayout sec1 = addDrawer(body, "框选区域", false);
+        sec1.addView(regionRow("识别区域", "属性面板 / 卡带详情 OCR 范围",
                 RegionStore.TYPE_SCAN));
-        sec1.addView(regionRow("空幕面板", "卡带详情 主/副属性范围",
-                RegionStore.TYPE_CASSETTE));
-        panel.addView(sec1);
 
-        // ===== 分区 2：自动化（抽屉）=====
-        final LinearLayout sec2 = new LinearLayout(ctx);
-        sec2.setOrientation(LinearLayout.VERTICAL);
-        sec2.setPadding(0, dp(2), 0, 0);
+        final LinearLayout secLock = addDrawer(body, "自动上锁 / 弃置", true);
 
-        final TextView autoHead = sectionHeader("自动化", true);
-        autoHead.setOnClickListener(v -> {
-            boolean vis = sec2.getVisibility() == View.VISIBLE;
-            sec2.setVisibility(vis ? View.GONE : View.VISIBLE);
-            autoHead.setText((vis ? "▸ " : "▾ ") + "自动化");
-        });
-        panel.addView(autoHead);
-
-        // 自动化总开关
         LinearLayout swRow = new LinearLayout(ctx);
         swRow.setOrientation(LinearLayout.HORIZONTAL);
         swRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -332,18 +332,14 @@ public class FloatWindow {
         swRow.addView(swName, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        boolean swOn = AutoRule.isEnabled();
-        TextView swBtn = tv(swOn ? "已开启" : "已关闭", 9,
-                swOn ? "#FFFFFF" : C_SUB, true);
+        final TextView swBtn = tv("", 9, C_SUB, true);
         swBtn.setGravity(Gravity.CENTER);
         swBtn.setPadding(dp(11), dp(5), dp(11), dp(5));
-        swBtn.setBackground(swOn
-                ? bg("#CC2E7D32", 6, null)
-                : bg("#1AFFFFFF", 6, "#40FFFFFF"));
+        refreshSwitchBtn(swBtn, AutoRule.isEnabled());
+
         swBtn.setOnClickListener(v -> {
             AutoRule.setEnabled(!AutoRule.isEnabled());
-            try { wm.removeView(panel); } catch (Throwable ignored) {}
-            showCollectMenu();
+            refreshSwitchBtn(swBtn, AutoRule.isEnabled());
         });
         swRow.addView(swBtn);
 
@@ -351,16 +347,88 @@ public class FloatWindow {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         swl.bottomMargin = dp(4);
-        sec2.addView(swRow, swl);
+        secLock.addView(swRow, swl);
 
-        sec2.addView(regionRow("锁定按钮", "自动上锁的点击位置",
+        secLock.addView(regionRow("锁定按钮", "自动上锁的点击位置",
                 RegionStore.TYPE_LOCK));
-        sec2.addView(regionRow("弃置按钮", "自动弃置的点击位置",
+        secLock.addView(regionRow("弃置按钮", "自动弃置的点击位置",
                 RegionStore.TYPE_DISCARD));
 
-        panel.addView(sec2);
+        final LinearLayout sec2 = addDrawer(body, "全自动", true);
 
-        // ===== 关闭按钮 =====
+        final LinearLayout swRow2 = new LinearLayout(ctx);
+        swRow2.setOrientation(LinearLayout.HORIZONTAL);
+        swRow2.setGravity(Gravity.CENTER_VERTICAL);
+        swRow2.setPadding(dp(8), dp(6), dp(8), dp(6));
+        swRow2.setBackground(bg("#14FFFFFF", 7, null));
+
+        LinearLayout swCol2 = new LinearLayout(ctx);
+        swCol2.setOrientation(LinearLayout.VERTICAL);
+
+        TextView swName2 = tv("自动切换", 11, C_TEXT, true);
+        swCol2.addView(swName2);
+
+        AutoPoints apInfo0 = AutoPoints.load();
+
+        TextView apInfo = tv(apInfo0.summary(), 9,
+                apInfo0.hasCells() ? C_SUB : "#F87171", false);
+        apInfo.setPadding(0, dp(1), 0, 0);
+        swCol2.addView(apInfo);
+
+        swRow2.addView(swCol2, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        boolean sw2On = autoSwitch;
+        final TextView swBtn2 = tv("", 9, C_SUB, true);
+        swBtn2.setGravity(Gravity.CENTER);
+        swBtn2.setPadding(dp(11), dp(5), dp(11), dp(5));
+        refreshSwitchBtn(swBtn2, sw2On);
+        swBtn2.setOnClickListener(v -> {
+            if (!autoSwitch) {
+                AutoPoints check = AutoPoints.load();
+                if (!check.hasCells()) {
+                    toast("请先录制点位");
+                    return;
+                }
+            }
+            autoSwitch = !autoSwitch;
+            saveAutoSwitch(autoSwitch);
+            refreshSwitchBtn(swBtn2, autoSwitch);
+        });
+        swRow2.addView(swBtn2);
+
+        LinearLayout.LayoutParams swl2 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        swl2.topMargin = dp(4);
+        swl2.bottomMargin = dp(4);
+        sec2.addView(swRow2, swl2);
+
+        sec2.addView(autoEntryRow("录制点位", "列表格子的点击顺序",
+                AutoPoints.load().hasCells()
+                        ? AutoPoints.load().count() + " 个"
+                        : "未录制",
+                "录制", () -> {
+                    try { wm.removeView(panel); } catch (Throwable ignored) {}
+                    startPointRecord();
+                }));
+
+        final AutoPoints apOne = AutoPoints.load();
+        sec2.addView(autoEntryRow("执行本页", "跑完这一页就停，翻页后手动再点开始",
+                apOne.hasCells() ? "就绪" : "请先录制点位",
+                "开始", () -> {
+                    if (!requireReady()) return;
+                    try { wm.removeView(panel); } catch (Throwable ignored) {}
+                    runAuto(AutoRunner.MODE_ONE_PAGE, 1, 1);
+                }));
+
+        scroller.addView(body, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams scLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        panel.addView(scroller, scLp);
+
         TextView done = tv("完成", 12, "#FFFFFF", true);
         done.setGravity(Gravity.CENTER);
         done.setBackground(bg(C_ACCENT, 8, null));
@@ -378,7 +446,21 @@ public class FloatWindow {
         plp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         plp.gravity = Gravity.CENTER;
         plp.width = dp(230);
-        plp.height = WindowManager.LayoutParams.WRAP_CONTENT;
+
+        int screenH;
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowMetrics wmt =
+                        ((WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE))
+                                .getCurrentWindowMetrics();
+                screenH = wmt.getBounds().height();
+            } else {
+                screenH = ctx.getResources().getDisplayMetrics().heightPixels;
+            }
+        } catch (Throwable t) {
+            screenH = ctx.getResources().getDisplayMetrics().heightPixels;
+        }
+        plp.height = (int) (screenH * 0.80f);
 
         try {
             wm.addView(panel, plp);
@@ -387,7 +469,6 @@ public class FloatWindow {
         }
     }
 
-    /** 分区标题 */
     private TextView sectionHeader(String name, boolean foldable) {
         TextView t = tv((foldable ? "▸ " : "") + name, 11,
                 foldable ? C_ACCENT : C_SUB, true);
@@ -395,7 +476,33 @@ public class FloatWindow {
         return t;
     }
 
-    /** 区域行：名称 + 当前值 + 框选按钮 */
+    private void refreshSwitchBtn(TextView btn, boolean on) {
+        btn.setText(on ? "已开启" : "已关闭");
+        btn.setTextColor(on ? Color.WHITE : Color.parseColor(C_SUB));
+        btn.setBackground(on
+                ? bg("#CC2E7D32", 6, null)
+                : bg("#1AFFFFFF", 6, "#40FFFFFF"));
+    }
+
+    private LinearLayout addDrawer(LinearLayout parent, String name, boolean expanded) {
+        final LinearLayout content = new LinearLayout(ctx);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, dp(2), 0, dp(2));
+        content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+
+        final TextView head = sectionHeader(name, true);
+        head.setText((expanded ? "▾ " : "▸ ") + name);
+        head.setOnClickListener(v -> {
+            boolean vis = content.getVisibility() == View.VISIBLE;
+            content.setVisibility(vis ? View.GONE : View.VISIBLE);
+            head.setText((vis ? "▸ " : "▾ ") + name);
+        });
+
+        parent.addView(head);
+        parent.addView(content);
+        return content;
+    }
+
     private LinearLayout regionRow(final String name, String desc, final int type) {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -408,7 +515,6 @@ public class FloatWindow {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         rl.bottomMargin = dp(4);
 
-        // 左侧文字
         LinearLayout col = new LinearLayout(ctx);
         col.setOrientation(LinearLayout.VERTICAL);
 
@@ -424,7 +530,6 @@ public class FloatWindow {
         row.addView(col, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        // 框选按钮
         TextView btn = tv("框选", 9, C_ACCENT, false);
         btn.setPadding(dp(9), dp(4), dp(9), dp(4));
         btn.setBackground(bg("#207C4DFF", 6, C_ACCENT));
@@ -438,7 +543,6 @@ public class FloatWindow {
         });
         row.addView(btn);
 
-        // 测试按钮（仅驱动块的锁定/弃置按钮）
         boolean isBtn = (type == RegionStore.TYPE_LOCK)
                 || (type == RegionStore.TYPE_DISCARD);
         if (isBtn) {
@@ -470,9 +574,8 @@ public class FloatWindow {
             row.addView(test, tl);
         }
 
-        // 已有值时显示恢复/清除按钮
         if (RegionStore.has(type)) {
-            // 识别区与空幕面板都有默认值；锁定/弃置按钮叫「清除」
+
             boolean hasDefault = !isBtn;
             TextView op = tv(hasDefault ? "恢复默认" : "清除", 9,
                     hasDefault ? "#FFB300" : "#F87171", false);
@@ -486,7 +589,7 @@ public class FloatWindow {
             op.setOnClickListener(v -> {
                 RegionStore.clear(type);
                 toast(hasDefault ? (RegionStore.nameOf(type) + "已恢复默认") : "已清除");
-                // 重建面板以刷新显示
+
                 try {
                     ViewGroup pp = (ViewGroup) row.getParent().getParent();
                     wm.removeView(pp);
@@ -522,7 +625,6 @@ public class FloatWindow {
             });
         }
 
-        // 截图作为放大镜数据源（异步，避免卡 UI）
         ProbeService svc = ProbeService.get();
         if (svc != null) {
             new Thread(() -> {
@@ -567,14 +669,17 @@ public class FloatWindow {
     private void stopCollect() {
         if (overlay != null) {
             try { wm.removeView(overlay); } catch (Throwable ignored) {}
+            overlay.release();
             overlay = null;
         }
     }
 
-    // ==================== 运行 ====================
-
     private void start() {
-        if (running) return;
+
+        if (running) {
+            if (paused) resume();
+            return;
+        }
         if (!ProbeService.isReady()) {
             setStatus("无障碍未开启");
             toast("请先开启无障碍服务");
@@ -585,9 +690,18 @@ public class FloatWindow {
             return;
         }
         running = true;
+        paused = false;
         setStatus("运行中");
+        btnStart.setText("开始");
         btnStart.setBackground(chipBg("#CC2E7D32"));
+        btnPause.setText("暂停");
         btnPause.setBackground(chipBg("#CC7C4DFF"));
+        btnStop.setBackground(chipBg("#CCB3261E"));
+        ProbeService.captureVolumeKey = true;
+        if (tvHint != null) {
+            tvHint.setText("运行中 · 按音量下键暂停");
+            tvHint.setVisibility(View.VISIBLE);
+        }
 
         Logger.appendTo("trace.txt", "=== 开始 === 服务=" + ProbeService.isReady()
                 + " OCR=" + ocr.isReady()
@@ -598,38 +712,154 @@ public class FloatWindow {
         worker = new Thread(() -> {
             int round = 0;
             while (running) {
+
+                if (paused) {
+                    try { Thread.sleep(150); } catch (InterruptedException e) { break; }
+                    continue;
+                }
                 round++;
                 long t0 = System.currentTimeMillis();
                 try {
-                    if (cassetteMode) {
-                        tickCassette(round);
-                    } else {
-                        tick(round);
-                    }
+                    dispatchTick(round);
                 } catch (Throwable e) {
                     Logger.appendTo("trace.txt", "r" + round + " 异常: " + e);
                 }
+
+                Logger.flushAll();
                 long cost = System.currentTimeMillis() - t0;
                 try { Thread.sleep(Math.max(200, 900 - cost)); }
                 catch (InterruptedException e) { break; }
             }
+            Logger.flushAll();
         }, "affix-worker");
         worker.start();
+
+        if (autoSwitch) {
+            runAuto(AutoRunner.MODE_ONE_PAGE, 1, 1);
+        }
     }
 
     private void pause() {
-        if (!running) return;
-        running = false;
-        if (worker != null) { worker.interrupt(); worker = null; }
-        setStatus("已暂停");
+
+        if (running && paused) {
+            stopAll();
+            restoreNormalUI();
+            return;
+        }
+        if (!running || paused) return;
+        paused = true;
+
+        if (autoRunner != null && autoRunner.isRunning() && !autoRunner.isPaused()) {
+            autoRunner.togglePause();
+        }
+        setTransparent(false);
+        if (tvHint != null) {
+            tvHint.setText("已暂停 · 点「继续」或按音量下键恢复");
+            tvHint.setVisibility(View.VISIBLE);
+        }
+        setStatus("⏸ 已暂停");
         ui.post(() -> {
-            btnStart.setBackground(chipBg("#CC7C4DFF"));
-            btnPause.setBackground(chipBg("#25FFFFFF"));
+            btnStart.setText("继续");
+            btnStart.setBackground(chipBg("#CC2E7D32"));
+            btnPause.setText("停止");
+            btnPause.setBackground(chipBg("#CCB3261E"));
+            btnStop.setText("结束");
+            btnStop.setBackground(chipBg("#CCB3261E"));
         });
     }
 
-    /** 单轮识别 */
-    private void tick(int round) {
+    private void resume() {
+        if (!running || !paused) return;
+        paused = false;
+        if (autoRunner != null && autoRunner.isRunning() && autoRunner.isPaused()) {
+            autoRunner.togglePause();
+        }
+        setTransparent(autoSwitch && autoRunner != null && autoRunner.isRunning());
+        if (tvHint != null) {
+            tvHint.setText("运行中 · 按音量下键暂停");
+            tvHint.setVisibility(View.VISIBLE);
+        }
+        setStatus("运行中");
+        ui.post(() -> {
+            btnStart.setText("开始");
+            btnStart.setBackground(chipBg("#CC2E7D32"));
+            btnPause.setText("暂停");
+            btnPause.setBackground(chipBg("#CC7C4DFF"));
+            btnStop.setText("停止");
+            btnStop.setBackground(chipBg("#CCB3261E"));
+        });
+        Logger.appendTo("trace.txt", "=== 继续 ===");
+    }
+
+    private void stopAll() {
+        running = false;
+        paused = false;
+        if (worker != null) { worker.interrupt(); worker = null; }
+        if (autoRunner != null && autoRunner.isRunning()) {
+            autoRunner.stop("用户停止");
+        }
+        setTransparent(false);
+        ProbeService.captureVolumeKey = false;
+        if (tvHint != null) tvHint.setVisibility(View.GONE);
+        setStatus("已停止");
+
+        ui.post(() -> {
+            if (btnStart != null) {
+                btnStart.setText("开始");
+                btnStart.setBackground(chipBg("#CC2E7D32"));
+            }
+            if (btnPause != null) {
+                btnPause.setText("暂停");
+                btnPause.setBackground(chipBg("#25FFFFFF"));
+            }
+            if (btnStop != null) {
+                btnStop.setText("停止");
+                btnStop.setBackground(chipBg("#25FFFFFF"));
+            }
+        });
+    }
+
+    public String handleOneCard(int round) {
+        ProbeService svc = ProbeService.get();
+        if (svc == null) return null;
+
+        Bitmap bmp = svc.screenshot();
+        if (bmp == null) {
+            Logger.appendTo("trace.txt", "r" + round + " ✗ 截屏失败");
+            return null;
+        }
+
+        try {
+            if (bmp.getWidth() < bmp.getHeight()) {
+                Logger.appendTo("trace.txt", "r" + round + " ✗ 竖屏");
+                return null;
+            }
+            int[] region = RegionStore.scan();
+            List<OcrEngine.Box> boxes = ocr.recognize(bmp, region);
+            if (boxes == null) boxes = new ArrayList<>();
+
+            String type = currentTarget();
+            boolean cassette;
+            if (RuleType.DRIVE.equals(type)) {
+                cassette = false;
+            } else if (RuleType.CASSETTE.equals(type)) {
+                cassette = true;
+            } else {
+                cassette = looksLikeCassette(boxes);
+            }
+
+            if (cassette) return tickCassetteOnce(round, bmp, boxes);
+            return tickOnce(round, bmp, boxes);
+        } catch (Throwable t) {
+            Logger.appendTo("trace.txt", "r" + round + " 识别异常: " + t);
+            return null;
+        } finally {
+            if (!bmp.isRecycled()) bmp.recycle();
+        }
+    }
+
+    private void dispatchTick(int round) {
+        String type = currentTarget();
         ProbeService svc = ProbeService.get();
         if (svc == null) {
             Logger.appendTo("trace.txt", "r" + round + " ✗ 服务为空");
@@ -644,13 +874,134 @@ public class FloatWindow {
             return;
         }
 
-        // 必须是横屏
-        if (bmp.getWidth() < bmp.getHeight()) {
-            Logger.appendTo("trace.txt", "r" + round + " ✗ 竖屏 "
-                    + bmp.getWidth() + "x" + bmp.getHeight());
-            setStatus("请切到游戏");
-            bmp.recycle();
-            return;
+        try {
+            if (bmp.getWidth() < bmp.getHeight()) {
+                Logger.appendTo("trace.txt", "r" + round + " ✗ 竖屏 "
+                        + bmp.getWidth() + "x" + bmp.getHeight());
+                setStatus("请切到游戏");
+                return;
+            }
+
+            int[] region = RegionStore.scan();
+            List<OcrEngine.Box> boxes = ocr.recognize(bmp, region);
+            if (boxes == null) boxes = new ArrayList<>();
+
+            final boolean cassette;
+            if (RuleType.DRIVE.equals(type)) {
+                cassette = false;
+            } else if (RuleType.CASSETTE.equals(type)) {
+                cassette = true;
+            } else {
+                cassette = looksLikeCassette(boxes);
+            }
+
+            try {
+                if (cassette) {
+                    tickCassetteOnce(round, bmp, boxes);
+                } else {
+                    tickOnce(round, bmp, boxes);
+                }
+            } catch (Throwable t) {
+                Logger.appendTo("trace.txt", "r" + round + (cassette ? " 空幕" : "") + "识别异常: " + t);
+            }
+        } finally {
+            if (!bmp.isRecycled()) bmp.recycle();
+        }
+    }
+
+    private String currentTarget() {
+        String a = ruleSet != null ? RuleType.normalize(ruleSet.target) : RuleType.BOTH;
+        String b = cassetteRule != null
+                ? RuleType.normalize(cassetteRule.target) : RuleType.BOTH;
+
+        if (RuleType.BOTH.equals(a) || RuleType.BOTH.equals(b)) return RuleType.BOTH;
+
+        if (!a.equals(b)) return RuleType.BOTH;
+
+        return a;
+    }
+
+    private boolean looksLikeCassette(List<OcrEngine.Box> boxes) {
+        try {
+            if (cassetteRule == null) {
+                cassetteRule = CassetteRule.load(ctx);
+                cassetteReader = new CassetteReader(cassetteRule);
+            }
+            if (boxes == null) return false;
+            for (OcrEngine.Box b : boxes) {
+                if (b.text == null) continue;
+                if (cassetteRule.matchSet(b.text) != null) {
+                    Logger.appendTo("trace.txt", "界面=空幕 (套装: " + b.text + ")");
+                    return true;
+                }
+            }
+            Logger.appendTo("trace.txt", "界面=驱动块 (无套装名)");
+            return false;
+        } catch (Throwable e) {
+            Logger.appendTo("trace.txt", "界面判断异常: " + e);
+            return false;
+        }
+    }
+
+    private boolean autoLockOrDiscard(ProbeService svc, int round,
+                                      String grade, String reason, String sig) {
+        if (!running || !AutoRule.anyEnabled()) {
+            if (round % 20 == 1) {
+                Logger.appendTo("trace.txt", "r" + round + " 自动未启用");
+            }
+            return false;
+        }
+
+        int target;
+        String act;
+        if (AutoRule.shouldLock(grade)) {
+            target = RegionStore.TYPE_LOCK;
+            act = "锁定";
+        } else if (AutoRule.shouldDiscard(grade)) {
+            target = RegionStore.TYPE_DISCARD;
+            act = "弃置";
+        } else {
+            lastSig = null;
+            return false;
+        }
+
+        int[] center = RegionStore.center(target);
+        if (center == null) {
+            String miss = target == RegionStore.TYPE_LOCK ? "未框选锁定按钮" : "未框选弃置按钮";
+            ui.post(() -> tvReason.setText(miss));
+            Logger.appendTo("trace.txt", "r" + round + " " + miss);
+            return false;
+        }
+
+        String fullSig = grade + "|" + sig;
+        boolean same = fullSig.equals(lastSig);
+        Logger.appendTo("trace.txt", "r" + round + " 准备" + act
+                + " (" + center[0] + "," + center[1] + ") 评级=" + grade
+                + " sig=" + sig + " same=" + same);
+        if (same) return false;
+
+        boolean tapped2 = svc.tapAndWait(center[0], center[1], 1200);
+        lastSig = fullSig;
+        final String fAct = act;
+        final int[] fc = center;
+        if (!tapped2) {
+            Logger.appendTo("trace.txt", "r" + round + " 点击" + act + "未完成，已放行");
+            lastSig = null;
+        }
+        ui.post(() -> {
+            tvStatus.setText("▶ 点击" + fAct + " (" + fc[0] + "," + fc[1] + ")");
+            tvReason.setText(reason + " → 自动" + fAct);
+        });
+        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
+        return true;
+    }
+
+    private String tickOnce(int round, Bitmap bmp, List<OcrEngine.Box> boxes) {
+        ProbeService svc = ProbeService.get();
+        if (svc == null) {
+            Logger.appendTo("trace.txt", "r" + round + " ✗ 服务为空");
+            setStatus("无障碍未连接");
+            return null;
         }
         if (round == 1) {
             Logger.appendTo("trace.txt", "r1 截图 " + bmp.getWidth()
@@ -660,23 +1011,18 @@ public class FloatWindow {
         long t0 = System.currentTimeMillis();
 
         int[] region = RegionStore.scan();
-        int affixY = region[1] + (int) (region[3] * 0.34f);
-        int[] affixRegion = {region[0], affixY,
-                region[2], region[3] - (affixY - region[1])};
 
         if (com.hollow.affix.BuildConfig.DEBUG_SHOT && debugOnce) {
-            Logger.saveDebug(bmp, affixRegion, "r" + round);
+            Logger.saveDebug(bmp, region, "r" + round);
             debugOnce = false;
         }
 
-        List<OcrEngine.Box> boxes = ocr.recognize(bmp, affixRegion);
-
-        // 解析副属性
-        List<String> names = new ArrayList<>();   // 标准词条名
-        List<String> pretty = new ArrayList<>();  // 显示用
+        List<String> names = new ArrayList<>();
+        List<String> pretty = new ArrayList<>();
         int rx = region[0], rw = region[2];
         for (OcrEngine.Box b : boxes) {
-            if (b.x > rx + rw * 0.73f) continue;
+
+            if (b.x > rx + rw * 0.78f) continue;
             String raw = b.text;
             if (raw == null) continue;
             if (!raw.contains("增加") && !raw.contains("提升")
@@ -694,58 +1040,10 @@ public class FloatWindow {
             pretty.add(AffixMatcher.pretty(clean));
         }
 
-        // 判定
         Rating.Result rs = Rating.evaluate(names, ruleSet);
-// ---- 自动操作 ----
-        // 规则在 App 主界面配置，这里只执行。
-        boolean didTap = false;
-        if (running && AutoRule.anyEnabled()) {
-            int target = -1;
-            String act = "";
-            if (AutoRule.shouldLock(rs.grade)) {
-                target = RegionStore.TYPE_LOCK;
-                act = "锁定";
-            } else if (AutoRule.shouldDiscard(rs.grade)) {
-                target = RegionStore.TYPE_DISCARD;
-                act = "弃置";
-            }
-            if (target >= 0) {
-                int[] center = RegionStore.center(target);
-                if (center == null) {
-                    final String miss = target == RegionStore.TYPE_LOCK
-                            ? "未框选锁定按钮" : "未框选弃置按钮";
-                    ui.post(() -> tvReason.setText(miss));
-                    Logger.appendTo("trace.txt", "r" + round + " " + miss);
-                } else {
-                    // 去重依据：词条内容 + 评级。内容变了说明换了卡片。
-                    String sig = rs.grade + "|" + String.join(",", names);
-                    boolean same = sig.equals(lastSig);
-                    Logger.appendTo("trace.txt", "r" + round + " 准备" + act
-                            + " (" + center[0] + "," + center[1] + ") 评级=" + rs.grade
-                            + " 词条=" + names + " same=" + same);
-                    if (!same) {
-                        svc.tap(center[0], center[1]);
-                        lastSig = sig;
-                        didTap = true;
-                        final String fAct = act;
-                        final int[] fc = center;
-                        ui.post(() -> {
-                            tvStatus.setText("▶ 点击" + fAct + " (" + fc[0] + "," + fc[1] + ")");
-                            tvReason.setText(rs.reason + " → 自动" + fAct);
-                        });
-                        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
-                    }
-                }
-            } else {
-                lastSig = null;
-            }
-        } else if (running && !AutoRule.anyEnabled()) {
-            // 只在状态变化时记录，避免刷屏
-            if (round % 20 == 1) {
-                Logger.appendTo("trace.txt", "r" + round + " 自动未启用"
-                        + " enabled=" + AutoRule.isEnabled());
-            }
-        }
+
+        boolean didTap = autoLockOrDiscard(svc, round,
+                rs.grade, rs.reason, String.join(",", names));
 
         final String grade = rs.grade;
         final String color = rs.color;
@@ -756,7 +1054,7 @@ public class FloatWindow {
         final int cNormal = Color.parseColor(RuleSet.COLOR_NORMAL);
         for (int i = 0; i < 4; i++) {
             affixStr[i] = i < pretty.size() ? "· " + pretty.get(i) : "· —";
-            // names 与 pretty 一一对应，按标准词条名查权重着色
+
             affixColors[i] = i < names.size()
                     ? Color.parseColor(ruleSet.colorForAffix(names.get(i)))
                     : cNormal;
@@ -766,21 +1064,27 @@ public class FloatWindow {
 
         final boolean tapped = didTap;
         ui.post(() -> {
-            tvGrade.setText(grade);
-            tvGrade.setTextColor(Color.parseColor(color));
-            tvScore.setText(score + "分");
-            tvReason.setText(reason);
-            for (int i = 0; i < 4; i++) {
-                tvAffix[i].setText(affixStr[i]);
-                tvAffix[i].setTextColor(affixColors[i]);
-            }
-            // 点击时保留点击提示，不覆盖
-            if (!tapped) {
-                tvStatus.setText(roundNo + "轮 " + cost + "ms");
+            try {
+                tvGrade.setText(grade);
+                tvGrade.setTextColor(parseColorSafe(color));
+                tvScore.setText(score + "分");
+                tvReason.setText(reason);
+                for (int i = 0; i < 4; i++) {
+                    tvAffix[i].setText(affixStr[i]);
+                    tvAffix[i].setTextColor(affixColors[i]);
+                }
+
+                if (!tapped) {
+                    tvStatus.setText(roundNo + "轮 " + cost + "ms");
+                }
+            } catch (Throwable e) {
+                Logger.appendTo("trace.txt", "r" + roundNo + " 界面刷新异常: " + e);
+            } finally {
+
+                forceRedraw();
             }
         });
 
-        // 落盘
         StringBuilder sb = new StringBuilder();
         sb.append("轮次\t").append(round).append('\n');
         sb.append("规则\t").append(ruleSet.name).append('\n');
@@ -789,10 +1093,8 @@ public class FloatWindow {
         sb.append("耗时\t").append(cost).append("ms\n");
         Logger.appendTo("ocr_cards.txt", sb.toString());
 
-        bmp.recycle();
+        return rs.grade + "|" + String.join(",", names);
     }
-
-    // ==================== UI 辅助 ====================
 
     private void setStatus(String s) {
         ui.post(() -> {
@@ -807,154 +1109,540 @@ public class FloatWindow {
         btnFold.setText(folded ? "□" : "─");
     }
 
-    // ==================== 模式切换 ====================
+    private boolean requireReady() {
+        AutoPoints ap = AutoPoints.load();
+        if (!ap.hasCells()) { toast("请先录制点位"); return false; }
+        return true;
+    }
 
-    /** 驱动块 ⇄ 空幕 切换 */
-    private void toggleMode() {
-        cassetteMode = !cassetteMode;
-        if (cassetteMode && cassetteRule == null) {
-            cassetteRule = CassetteRule.load(ctx);
-            cassetteReader = new CassetteReader(cassetteRule);
-            Logger.i(TAG, "空幕规则加载: " + cassetteRule.name
-                    + " 权重档 " + cassetteRule.profiles.size()
-                    + " 套装 " + cassetteRule.setDetails.size());
-        }
-        ui.post(() -> {
-            btnMode.setText(cassetteMode ? "幕" : "块");
-            tvRuleName.setText(cassetteMode
-                    ? (cassetteRule != null ? cassetteRule.name : "空幕")
-                    : ruleSet.name);
-            setStatus(cassetteMode ? "空幕模式" : "驱动块模式");
-            // 清空上次判定，避免模式切换后残留
-            tvGrade.setText("—");
-            tvGrade.setTextColor(Color.parseColor(C_TEXT));
-            tvScore.setText("");
-            tvReason.setText("");
-            for (int i = 0; i < 4; i++) tvAffix[i].setText("· —");
-            lastSig = null;
-            if (cassetteMode) {
-                toast("空幕模式：对准卡带详情面板");
-            } else {
-                toast("驱动块模式");
+    private LinearLayout autoEntryRowAuto(String name, String desc,
+                                          java.util.function.Supplier<String> value,
+                                          String btnText,
+                                          java.util.function.Consumer<TextView> onClick) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(8), dp(7), dp(8), dp(7));
+        row.setBackground(bg("#14FFFFFF", 7, null));
+
+        LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rl.bottomMargin = dp(4);
+        row.setLayoutParams(rl);
+
+        LinearLayout col = new LinearLayout(ctx);
+        col.setOrientation(LinearLayout.VERTICAL);
+
+        TextView n = tv(name, 11, C_TEXT, true);
+        col.addView(n);
+
+        String v = value.get();
+        final TextView d = tv(v, 9,
+                v.startsWith("未") ? "#F87171" : C_SUB, false);
+        d.setPadding(0, dp(1), 0, 0);
+        col.addView(d);
+
+        row.addView(col, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView btn = tv(btnText, 9, C_ACCENT, false);
+        btn.setPadding(dp(9), dp(4), dp(9), dp(4));
+        btn.setBackground(bg("#207C4DFF", 6, C_ACCENT));
+        btn.setOnClickListener(v2 -> onClick.accept(d));
+        row.addView(btn);
+
+        return row;
+    }
+
+    private LinearLayout autoEntryRow(String name, String desc,
+                                      String value, String btnText, Runnable onClick) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(8), dp(7), dp(8), dp(7));
+        row.setBackground(bg("#14FFFFFF", 7, null));
+
+        LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rl.bottomMargin = dp(4);
+        row.setLayoutParams(rl);
+
+        LinearLayout col = new LinearLayout(ctx);
+        col.setOrientation(LinearLayout.VERTICAL);
+
+        TextView n = tv(name, 11, C_TEXT, true);
+        col.addView(n);
+
+        TextView d = tv(value, 9,
+                "未录制".equals(value) || "未设置".equals(value) ? "#F87171" : C_SUB, false);
+        d.setPadding(0, dp(1), 0, 0);
+        col.addView(d);
+
+        row.addView(col, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView btn = tv(btnText, 9, C_ACCENT, false);
+        btn.setPadding(dp(9), dp(4), dp(9), dp(4));
+        btn.setBackground(bg("#207C4DFF", 6, C_ACCENT));
+        btn.setOnClickListener(v -> onClick.run());
+        row.addView(btn);
+
+        return row;
+    }
+
+    private void startPointRecord() {
+        if (recorder != null) return;
+        AutoPoints data = AutoPoints.load();
+
+        data.cells.clear();
+        recorder = new AutoRecordView(ctx, true, data, new AutoRecordView.Listener() {
+            @Override
+            public void onPointAdded(int count) {
+                ui.post(() -> {
+                    int total = AutoPoints.CELLS_PER_PAGE;
+                    tvStatus.setText("已录 " + count + " / " + total);
+                    if (count >= total) {
+                        tvGrade.setText("录制完成");
+                        tvReason.setText("已录满 " + total + " 个，点位已保存");
+                    } else {
+                        tvGrade.setText("点击第 " + (count + 1) + " 个");
+                        tvReason.setText("点位录制中（一页固定 " + total + " 个）");
+                    }
+                });
             }
+
+            @Override
+            public void onSwipeChanged(int x1, int y1, int x2, int y2) {}
+
+            @Override
+            public void onPointFinished(AutoPoints d) {
+                recorder = null;
+                final boolean full = d.count() == AutoPoints.CELLS_PER_PAGE;
+                ui.post(() -> {
+                    restoreNormalUI();
+                    setStatus(full
+                            ? "点位已保存 " + d.count() + " 个"
+                            : "已保存 " + d.count() + " 个，但一页应为 "
+                              + AutoPoints.CELLS_PER_PAGE + " 个");
+                });
+                toast(full
+                        ? "点位已保存：" + d.count() + " 个"
+                        : "注意：录了 " + d.count() + " 个，一页应为 "
+                          + AutoPoints.CELLS_PER_PAGE + " 个");
+            }
+
+            @Override
+            public void onMaskShown() {
+
+                ui.postDelayed(FloatWindow.this::bringToFront, 120);
+            }
+
+            @Override
+            public void onSwipeFinished(AutoPoints d) {}
+
+            @Override
+            public void onCancelled() {
+                recorder = null;
+                ui.post(FloatWindow.this::restoreNormalUI);
+                toast("已取消");
+            }
+        });
+
+        enterRecordUI(true);
+        recorder.start();
+    }
+
+    private void startSwipeSetup() {
+        if (recorder != null) return;
+        AutoPoints data = AutoPoints.load();
+        recorder = new AutoRecordView(ctx, false, data, new AutoRecordView.Listener() {
+            @Override
+            public void onPointAdded(int count) {}
+
+            @Override
+            public void onSwipeChanged(int x1, int y1, int x2, int y2) {
+                ui.post(() -> {
+                    int dist = Math.abs(y1 - y2);
+
+                    String hint;
+                    if (dist < 300) hint = "距离偏短，可能翻不动";
+                    else if (dist > 1800) hint = "距离偏长，可能一次翻两页";
+                    else hint = "距离合适";
+                    tvGrade.setText(dist + "px");
+                    tvReason.setText(hint + " · (" + x1 + "," + y1 + ")→(" + x2 + "," + y2 + ")");
+                });
+            }
+
+            @Override
+            public void onPointFinished(AutoPoints d) {}
+
+            @Override
+            public void onSwipeFinished(AutoPoints d) {
+                recorder = null;
+                final boolean doTest = swipeThenTest;
+                swipeThenTest = false;
+                ui.post(() -> {
+                    restoreNormalUI();
+                    setStatus("滑动已保存");
+                });
+                if (doTest) {
+                    ui.postDelayed(FloatWindow.this::testSwipeOnce, 400);
+                } else {
+                    toast("滑动已保存");
+                }
+            }
+
+            @Override
+            public void onCancelled() {
+                recorder = null;
+                ui.post(FloatWindow.this::restoreNormalUI);
+                toast("已取消");
+            }
+        });
+
+        enterRecordUI(false);
+        recorder.start();
+    }
+
+    private void enterRecordUI(final boolean pointMode) {
+        ui.post(() -> {
+            if (bodyBox == null) return;
+
+            bodyBox.setVisibility(View.GONE);
+            tvStatus.setVisibility(View.VISIBLE);
+            tvStatus.setText(pointMode ? "点格子录点位" : "拖上下横线定位，对好之后点完成");
+            btnStart.setText("完成");
+            btnStart.setOnClickListener(v -> {
+                if (recorder == null) return;
+                if (pointMode) recorder.finishPoints();
+                else recorder.finishSwipe();
+            });
+            if (pointMode) {
+                btnPause.setText("撤销");
+                btnPause.setOnClickListener(v -> {
+                    if (recorder == null) return;
+                    recorder.undo();
+                });
+            } else {
+                btnPause.setText("测试");
+                btnPause.setOnClickListener(v -> {
+                    if (recorder == null) return;
+
+                    swipeThenTest = true;
+                    recorder.finishSwipe();
+                });
+            }
+
+            btnSelect.setText("取消");
+            btnSelect.setOnClickListener(v -> {
+                if (recorder != null) recorder.cancel();
+            });
+
+            tvRuleName.setText(pointMode ? "录制点位" : "设置滑动");
+
+            try {
+                lp.width = dp(150);
+                lp.x = 14;
+                lp.y = 70;
+                wm.updateViewLayout(root, lp);
+            } catch (Throwable ignored) {}
         });
     }
 
-    public boolean isCassetteMode() { return cassetteMode; }
+    private void testSwipeOnce() {
+        final AutoPoints ap = AutoPoints.load();
+        if (!ap.hasSwipe) { toast("请先设置滑动"); return; }
 
-    /**
-     * 重新加载规则（切换规则后调用，立即生效）。
-     * 已打开的悬浮窗不需要关闭重开。
-     */
+        ProbeService svc = ProbeService.get();
+        if (svc == null) { toast("无障碍未连接"); return; }
+
+        int x1 = ap.swipeX1, y1 = ap.swipeY1;
+        int x2 = ap.swipeX2, y2 = ap.swipeY2;
+        svc.swipeAndWait(x1, y1, x2, y2, ap.swipeDuration,
+                Math.max(1, ap.swipeSegments));
+        Logger.appendTo("trace.txt", "测试滑动 (" + x1 + "," + y1 + ")→(" + x2 + "," + y2
+                + ") 时长 " + ap.swipeDuration + "ms 分 " + ap.swipeSegments + " 段");
+
+        long wait = ap.swipeDuration + 600L;
+        ui.postDelayed(() -> ui.post(() -> {
+            tvGrade.setText("滑动测试");
+            tvReason.setText("翻到下一页了吗？");
+
+            btnStart.setText("翻到了");
+            btnStart.setOnClickListener(v -> {
+                restoreNormalUI();
+                setStatus("滑动正常 · 距离 " + Math.abs(y1 - y2) + "px");
+                toast("滑动可用");
+            });
+
+            btnPause.setText("没翻");
+            btnPause.setOnClickListener(v -> {
+                restoreNormalUI();
+                setStatus("滑动无效 · 请调整横线");
+                toast("请检查横线是否对齐游戏滚动条");
+            });
+
+            btnSelect.setText("再试");
+            btnSelect.setOnClickListener(v -> {
+                restoreNormalUI();
+                testSwipeOnce();
+            });
+        }), wait);
+    }
+
+    private void forceRedraw() {
+        if (root == null) return;
+        try {
+            root.invalidate();
+            root.requestLayout();
+
+            if (lp != null) {
+                wm.updateViewLayout(root, lp);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void bringToFront() {
+        if (root == null) return;
+        try { wm.removeView(root); } catch (Throwable ignored) {}
+        try { wm.addView(root, lp); } catch (Throwable ignored) {}
+    }
+
+    private void restoreNormalUI() {
+        if (bodyBox == null) return;
+        bodyBox.setVisibility(View.VISIBLE);
+        tvRuleName.setText(ruleTitle());
+        tvGrade.setText("—");
+        tvScore.setText("");
+        tvReason.setText("");
+        for (int i = 0; i < 4; i++) tvAffix[i].setText("· —");
+
+        btnStart.setText("开始");
+        btnStart.setOnClickListener(v -> start());
+        btnPause.setText("暂停");
+        btnPause.setOnClickListener(v -> pause());
+        btnSelect.setText("设置");
+        btnSelect.setOnClickListener(v -> toggleCollect());
+
+        setStatus("就绪");
+    }
+
+    private void loadAutoSwitch() {
+        autoSwitch = AutoSwitch.isEnabled();
+    }
+
+    private void saveAutoSwitch(boolean on) {
+        AutoSwitch.setEnabled(on);
+    }
+
+    public void syncAutoSwitch(boolean on) {
+        autoSwitch = on;
+        Logger.appendTo("trace.txt", "自动切换同步为 " + on);
+    }
+
+    private void runAuto(int mode, int startPage, int endPage) {
+
+        if (!AutoSwitch.isEnabled()) {
+            setStatus("自动化已关闭");
+            toast("请先在设置里打开「自动化」");
+            return;
+        }
+        AutoPoints ap = AutoPoints.load();
+
+        if (!ap.hasCells()) {
+            setStatus("请先录制点位");
+            toast("请先录制点位");
+            return;
+        }
+
+        if (autoRunner != null && autoRunner.isRunning()) {
+            autoRunner.togglePause();
+            return;
+        }
+
+        autoRunner = new AutoRunner(ap, this::handleOneCard, mode, startPage, endPage,
+                new AutoRunner.Callback() {
+            @Override
+            public void onStep(int page, int pointIndex, int pointTotal) {
+                ui.post(() -> {
+                    tvStatus.setText("第 " + page + " 页 · 点位 " + pointIndex + "/" + pointTotal);
+                });
+            }
+
+            @Override
+            public void onPageTurn(int newPage) {
+                ui.post(() -> tvStatus.setText("翻到第 " + newPage + " 页"));
+            }
+
+            @Override
+            public void onStop(String reason, int totalPages) {
+                ui.post(() -> {
+                    setTransparent(false);
+                    ProbeService.captureVolumeKey = false;
+                    if (tvHint != null) tvHint.setVisibility(View.GONE);
+                    setStatus(reason + "（共 " + totalPages + " 页）");
+
+                    if (mode == AutoRunner.MODE_TEST && totalPages > 1) {
+                        AutoPoints save = AutoPoints.load();
+                        save.totalPages = totalPages;
+                        save.save();
+                        toast("测试完成：共 " + totalPages + " 页");
+                    } else {
+                        toast(reason);
+                    }
+                });
+            }
+        });
+
+        setTransparent(true);
+        ProbeService.captureVolumeKey = true;
+        if (tvHint != null) {
+            tvHint.setText("按音量下键暂停");
+            tvHint.setVisibility(View.VISIBLE);
+        }
+        autoRunner.start();
+    }
+
+    private void showRangePicker() {
+        final AutoPoints ap = AutoPoints.load();
+        int total = ap.totalPages;
+        if (total <= 0) {
+            toast("请先执行一次「测试」");
+            return;
+        }
+
+        final int[] range = {1, total};
+
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(12), dp(16), dp(12));
+
+        final TextView tvStart = tv("起始页 1", 12, C_TEXT, false);
+        box.addView(tvStart);
+        android.widget.SeekBar sb1 = new android.widget.SeekBar(ctx);
+        sb1.setMax(total - 1);
+        sb1.setProgress(0);
+        sb1.setOnSeekBarChangeListener(new SimpleSeek() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) {
+                range[0] = p + 1;
+                if (range[0] > range[1]) range[1] = range[0];
+                tvStart.setText("起始页 " + range[0]);
+            }
+        });
+        box.addView(sb1);
+
+        final TextView tvEnd = tv("结束页 " + total, 12, C_TEXT, false);
+        tvEnd.setPadding(0, dp(10), 0, 0);
+        box.addView(tvEnd);
+        android.widget.SeekBar sb2 = new android.widget.SeekBar(ctx);
+        sb2.setMax(total - 1);
+        sb2.setProgress(total - 1);
+        sb2.setOnSeekBarChangeListener(new SimpleSeek() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) {
+                range[1] = p + 1;
+                if (range[1] < range[0]) range[1] = range[0];
+                tvEnd.setText("结束页 " + range[1]);
+            }
+        });
+        box.addView(sb2);
+
+        new android.app.AlertDialog.Builder(ctx)
+                .setTitle("部分执行（共 " + total + " 页）")
+                .setView(box)
+                .setPositiveButton("开始", (d, w) -> runAuto(AutoRunner.MODE_RANGE, range[0], range[1]))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private static class SimpleSeek implements android.widget.SeekBar.OnSeekBarChangeListener {
+        @Override
+        public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) {}
+        @Override
+        public void onStartTrackingTouch(android.widget.SeekBar sb) {}
+        @Override
+        public void onStopTrackingTouch(android.widget.SeekBar sb) {}
+    }
+
+    private void setTransparent(boolean on) {
+        if (root == null || lp == null) return;
+        try {
+            if (on) {
+                lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            } else {
+                lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            }
+            wm.updateViewLayout(root, lp);
+        } catch (Throwable e) {
+            Logger.appendTo("trace.txt", "切换穿透失败: " + e);
+        }
+    }
+
+    private void onVolumeDown() {
+        if (!running) return;
+        if (paused) resume();
+        else pause();
+    }
+
     public void reloadRules() {
         if (ctx == null) return;
-        // 驱动块规则
+
         ruleSet = RuleSet.load(ctx);
-        // 空幕规则
-        if (cassetteMode) {
-            cassetteRule = CassetteRule.load(ctx);
-            cassetteReader = new CassetteReader(cassetteRule);
-        }
+        cassetteRule = CassetteRule.load(ctx);
+        cassetteReader = new CassetteReader(cassetteRule);
         ui.post(() -> {
-            tvRuleName.setText(cassetteMode
-                    ? (cassetteRule != null ? cassetteRule.name : "空幕")
-                    : ruleSet.name);
+            tvRuleName.setText(ruleTitle());
             lastSig = null;
         });
         Logger.i(TAG, "规则已重载: 驱动块=" + ruleSet.name
-                + (cassetteMode ? " 空幕=" + (cassetteRule == null ? "-" : cassetteRule.name) : ""));
+                + "(" + ruleSet.target + ")"
+                + " 空幕=" + cassetteRule.name + "(" + cassetteRule.target + ")");
     }
 
-    /**
-     * 空幕单轮识别：读主属性 + 4 副属性 + 套装名，打分评级。
-     * 不做自动点击（空幕面板没有锁定/弃置逻辑）。
-     */
-    private void tickCassette(int round) {
+    private String ruleTitle() {
+        String type = currentTarget();
+        if (RuleType.DRIVE.equals(type)) return ruleSet != null ? ruleSet.name : "驱动块";
+        if (RuleType.CASSETTE.equals(type)) return cassetteRule != null ? cassetteRule.name : "空幕";
+
+        String a = ruleSet != null ? ruleSet.name : "驱动块";
+        String b = cassetteRule != null ? cassetteRule.name : "空幕";
+        String s = a + " / " + b;
+        return s.length() > 14 ? "驱动块 + 空幕" : s;
+    }
+
+    private String tickCassetteOnce(int round, Bitmap bmp, List<OcrEngine.Box> boxes) {
         ProbeService svc = ProbeService.get();
         if (svc == null) {
             setStatus("无障碍未连接");
-            return;
+            return null;
         }
         if (cassetteReader == null) {
             cassetteRule = CassetteRule.load(ctx);
             cassetteReader = new CassetteReader(cassetteRule);
         }
 
-        Bitmap bmp = svc.screenshot();
-        if (bmp == null) {
-            setStatus("截屏失败");
-            return;
-        }
-        if (bmp.getWidth() < bmp.getHeight()) {
-            setStatus("请切到游戏");
-            bmp.recycle();
-            return;
-        }
-
         long t0 = System.currentTimeMillis();
-        int[] region = RegionStore.get(RegionStore.TYPE_CASSETTE);
-        if (region == null) {
-            region = new int[]{RegionStore.CAS_X, RegionStore.CAS_Y,
-                                RegionStore.CAS_W, RegionStore.CAS_H};
-        }
+
+        int[] region = RegionStore.scan();
 
         CassetteReader.Parse p;
         try {
-            p = cassetteReader.read(ocr, bmp, region);
+            p = cassetteReader.read(boxes, region);
         } catch (Throwable e) {
             Logger.appendTo("trace.txt", "空幕识别异常: " + e);
-            bmp.recycle();
             setStatus("识别异常");
-            return;
+            return null;
         }
-        bmp.recycle();
 
         CassetteRule.Result r = cassetteRule.evaluate(p.mainAffix, p.subs, p.set);
+
         long cost = System.currentTimeMillis() - t0;
 
-        // ---- 自动操作（复用驱动块的按钮坐标与 AutoRule 配置）----
-        boolean didTap = false;
-        if (running && AutoRule.anyEnabled()) {
-            int target = -1;
-            String act = "";
-            if (AutoRule.shouldLock(r.grade)) {
-                target = RegionStore.TYPE_LOCK;
-                act = "锁定";
-            } else if (AutoRule.shouldDiscard(r.grade)) {
-                target = RegionStore.TYPE_DISCARD;
-                act = "弃置";
-            }
-            if (target >= 0) {
-                int[] center = RegionStore.center(target);
-                if (center == null) {
-                    final String miss = target == RegionStore.TYPE_LOCK
-                            ? "未框选锁定按钮" : "未框选弃置按钮";
-                    final String fmiss = miss;
-                    ui.post(() -> tvReason.setText(fmiss));
-                    Logger.appendTo("trace.txt", "r" + round + " " + miss);
-                } else {
-                    String sig = r.grade + "|" + String.join(",", p.subs)
-                            + "|" + p.mainAffix;
-                    boolean same = sig.equals(lastSig);
-                    Logger.appendTo("trace.txt", "r" + round + " 空幕准备" + act
-                            + " (" + center[0] + "," + center[1] + ") 评级=" + r.grade
-                            + " 词条=" + p.subs + " same=" + same);
-                    if (!same) {
-                        svc.tap(center[0], center[1]);
-                        lastSig = sig;
-                        didTap = true;
-                        final String fAct = act;
-                        final int[] fc = center;
-                        ui.post(() -> {
-                            tvStatus.setText("▶ 点击" + fAct + " (" + fc[0] + "," + fc[1] + ")");
-                        });
-                        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
-                    }
-                }
-            } else {
-                lastSig = null;
-            }
-        }
+        boolean didTap = autoLockOrDiscard(svc, round,
+                r.grade, "", String.join(",", p.subs) + "|" + p.mainAffix);
 
         final String grade = r.grade;
         final String color = r.color;
@@ -968,7 +1656,7 @@ public class FloatWindow {
         final String[] subStr = new String[4];
         final int[] subColors = new int[4];
         final int cNormal = Color.parseColor(CassetteRule.COLOR_NORMAL);
-        // 主属性无效则整件作废，副词条一律白色
+
         final boolean mainOk = r.mainScore > 0;
         for (int i = 0; i < 4; i++) {
             subStr[i] = i < p.subTexts.size() ? "· " + p.subTexts.get(i) : "· —";
@@ -979,31 +1667,35 @@ public class FloatWindow {
         final int roundNo = round;
         final String dbg = p.debug;
 
-        // 套装效果（2件 / 4件）
         CassetteRule.SetDetail sd = cassetteRule.detail(p.set);
         final boolean tapped = didTap;
-
         ui.post(() -> {
-            tvGrade.setText(grade);
-            tvGrade.setTextColor(Color.parseColor(color));
-            tvScore.setText(total + "分");
-            tvReason.setText(setTxt + " · " + profileTxt + " · " + mainTxt
-                    + (elemHit ? " ★" : ""));
-            for (int i = 0; i < 4; i++) {
-                tvAffix[i].setText(subStr[i]);
-                tvAffix[i].setTextColor(subColors[i]);
-            }
-            // 点击时保留点击提示，不覆盖
-            if (!tapped) {
-                tvStatus.setText(roundNo + "轮 " + cost + "ms");
-            }
-            // 折叠态时在状态栏显示套装效果摘要
-            if (folded && sd != null) {
-                tvStatus.setText(sd.element + " · " + sd.type + " · 4件 " + sd.four);
+            try {
+                tvGrade.setText(grade);
+                tvGrade.setTextColor(parseColorSafe(color));
+                tvScore.setText(total + "分");
+                tvReason.setText(setTxt + " · " + profileTxt + " · " + mainTxt
+                        + (elemHit ? " ★" : ""));
+                for (int i = 0; i < 4; i++) {
+                    tvAffix[i].setText(subStr[i]);
+                    tvAffix[i].setTextColor(subColors[i]);
+                }
+
+                if (!tapped) {
+                    tvStatus.setText(roundNo + "轮 " + cost + "ms");
+                }
+
+                if (folded && sd != null) {
+                    tvStatus.setText(sd.element + " · " + sd.type + " · 4件 " + sd.four);
+                }
+            } catch (Throwable e) {
+                Logger.appendTo("trace.txt", "r" + roundNo + " 空幕界面异常: " + e);
+            } finally {
+
+                forceRedraw();
             }
         });
 
-        // 落盘
         StringBuilder sb = new StringBuilder();
         sb.append("轮次\t").append(round).append('\n');
         sb.append("模式\t空幕\n");
@@ -1026,6 +1718,8 @@ public class FloatWindow {
         sb.append("耗时\t").append(cost).append("ms\n");
         sb.append("解析\t").append(dbg).append('\n');
         Logger.appendTo("cassette.txt", sb.toString());
+
+        return r.grade + "|" + p.mainAffix + "|" + String.join(",", p.subs);
     }
 
     private void toast(String s) {
@@ -1037,9 +1731,20 @@ public class FloatWindow {
         TextView t = new TextView(ctx);
         t.setText(s);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        t.setTextColor(Color.parseColor(color));
+        t.setTextColor(parseColorSafe(color));
         if (bold) t.setTypeface(null, Typeface.BOLD);
         return t;
+    }
+
+    private int parseColorSafe(String color) {
+        if (color == null || color.trim().isEmpty()) {
+            return Color.parseColor(C_TEXT);
+        }
+        try {
+            return Color.parseColor(color);
+        } catch (Throwable e) {
+            return Color.parseColor(C_TEXT);
+        }
     }
 
     private TextView miniBtn(String s) {

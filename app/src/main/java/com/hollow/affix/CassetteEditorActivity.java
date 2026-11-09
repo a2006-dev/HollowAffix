@@ -22,10 +22,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 空幕规则编辑器：6 页
- *   基本 / 等级 / 权重档 / 套装 / 主属性 / 副属性
- */
 public class CassetteEditorActivity extends Activity {
 
     private static final String C_BG = "#0A0E14";
@@ -161,8 +157,6 @@ public class CassetteEditorActivity extends Activity {
         }
     }
 
-    // ---------- 基本 ----------
-
     private void renderBasic() {
         bodyBox.addView(labeledInput("规则名 *", cr.name, s -> cr.name = s));
         bodyBox.addView(labeledInput("作者", cr.author, s -> cr.author = s));
@@ -170,14 +164,31 @@ public class CassetteEditorActivity extends Activity {
         bodyBox.addView(numberInput("版本", String.valueOf(cr.version), v -> {
             if (v >= 1) cr.version = v;
         }));
+
+        bodyBox.addView(sectionTitle("适用目标"));
+        bodyBox.addView(pickRow("识别对象", RuleType.label(cr.target), () -> {
+            String[] opts = {RuleType.CASSETTE, RuleType.DRIVE, RuleType.BOTH};
+            String[] names = {"空幕", "驱动块", "两者都识别"};
+            int cur = 0;
+            for (int i = 0; i < opts.length; i++) if (opts[i].equals(cr.target)) cur = i;
+            new AlertDialog.Builder(this)
+                    .setTitle("识别对象")
+                    .setSingleChoiceItems(names, cur, (d, which) -> {
+                        cr.target = opts[which];
+                        d.dismiss();
+                        renderPage();
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        }));
+        bodyBox.addView(hintText("选「空幕」时，遇到驱动块面板会自动跳过不识别"));
+
         bodyBox.addView(numberInput("双爆加成", String.valueOf(cr.doubleCritBonus), v -> {
             if (v >= 0) cr.doubleCritBonus = v;
         }));
         bodyBox.addView(hintText("空幕按分数占比分档，不看等级名匹配。\n"
                 + "总分 = 主属性 + 4 条副属性 + 双爆加成，除以权重档满分得到占比。"));
     }
-
-    // ---------- 等级 ----------
 
     private void renderGrades() {
         bodyBox.addView(hintText("等级需从高到低排列，占比门槛必须递减。\n"
@@ -299,8 +310,6 @@ public class CassetteEditorActivity extends Activity {
         renderPage();
     }
 
-    // ---------- 权重档 ----------
-
     private void renderProfiles() {
         bodyBox.addView(hintText("权重档决定某类套装怎么打分。\n"
                 + "每档有自己的主属性权重、副属性权重和满分。\n"
@@ -409,8 +418,6 @@ public class CassetteEditorActivity extends Activity {
         }));
         bodyBox.addView(add, wrapLp(12, 0));
     }
-
-    // ---------- 套装 ----------
 
     private void renderSets() {
         bodyBox.addView(hintText("每个套装绑定一个权重档，并指定本命主属性。\n"
@@ -574,8 +581,6 @@ public class CassetteEditorActivity extends Activity {
         return sb.toString();
     }
 
-    // ---------- 主属性权重 ----------
-
     private void renderMainWeights() {
         CassetteRule.Profile p = cr.profiles.get(editingProfile);
         if (p == null) {
@@ -600,8 +605,6 @@ public class CassetteEditorActivity extends Activity {
             }));
         }
     }
-
-    // ---------- 副属性权重 ----------
 
     private void renderSubWeights() {
         CassetteRule.Profile p = cr.profiles.get(editingProfile);
@@ -628,8 +631,6 @@ public class CassetteEditorActivity extends Activity {
         }
     }
 
-    // ==================== 保存 ====================
-
     private void onSave() {
         RuleValidator.Report rep = RuleValidator.validateCassette(cr,
                 CassetteRule.mainAffixList(), CassetteRule.subAffixList());
@@ -652,8 +653,6 @@ public class CassetteEditorActivity extends Activity {
             toast("保存失败: " + e.getMessage());
         }
     }
-
-    // ==================== 通用组件 ====================
 
     private interface TextCb { void onText(String s); }
     private interface NumCb { void onNum(int v); }
@@ -768,6 +767,31 @@ public class CassetteEditorActivity extends Activity {
         t.setLineSpacing(dp(4), 1f);
         t.setPadding(0, dp(4), 0, dp(10));
         return t;
+    }
+
+    private TextView sectionTitle(String s) {
+        TextView t = tv(s, 11, C_SUB, true);
+        t.setPadding(0, dp(12), 0, dp(6));
+        return t;
+    }
+
+    private LinearLayout pickRow(String label, String value, Runnable onClick) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setBackground(bg(C_CARD, 10, "#1FFFFFFF"));
+
+        TextView l = tv(label, 13, C_TEXT, false);
+        row.addView(l, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView v = tv(value, 13, C_ACCENT, true);
+        v.setPadding(dp(10), dp(5), dp(10), dp(5));
+        v.setBackground(bg("#207C4DFF", 6, C_ACCENT));
+        v.setOnClickListener(x -> onClick.run());
+        row.addView(v);
+        return row;
     }
 
     private TextView miniBtn(String s, Runnable r) {

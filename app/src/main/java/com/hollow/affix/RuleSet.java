@@ -15,10 +15,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 规则模板：从 assets/rules/*.json 或外部目录加载。
- * 支持自定义规则名、权重、判定条件。
- */
 public class RuleSet {
 
     public String name = "通用规则";
@@ -26,35 +22,31 @@ public class RuleSet {
     public int version = 1;
     public String description = "";
 
-    /** 词条名 → 权重 */
+    public String target = RuleType.DRIVE;
+
     public Map<String, Integer> weights = new LinkedHashMap<>();
-    /** 双爆加成 */
+
     public int doubleCritBonus = 3;
 
-    /** 判定规则，按顺序匹配 */
     public List<Rule> rules = new ArrayList<>();
-    /** 全部不匹配时的兜底等级 */
+
     public String fallback = "垃圾";
 
-    /** 组定义：组名 → 成员词条列表 */
     public Map<String, List<String>> groups = new HashMap<>();
-    /** 等级 → 颜色 */
+
     public Map<String, String> colors = new HashMap<>();
 
     public static class Rule {
         public String grade;
         public String desc;
-        /** 必须同时满足的项（可以是词条名或组名） */
+
         public List<String> require = new ArrayList<>();
-        /** 至少满足其中之一 */
+
         public List<String> requireAny = new ArrayList<>();
-        /** 词条总数下限 */
+
         public int minCount = 0;
     }
 
-    // ==================== 加载 ====================
-
-    /** 从 assets 加载内置规则 */
     public static RuleSet loadBuiltin(Context ctx) {
         try {
             AssetManager am = ctx.getAssets();
@@ -67,14 +59,11 @@ public class RuleSet {
         }
     }
 
-    /**
-     * 加载当前生效的规则：外部文件优先，读不到用 assets 内置。
-     */
     public static RuleSet load(Context ctx) {
         String json = RuleStore.loadJson(ctx, RuleStore.TYPE_DRIVE);
         if (json != null && !json.trim().isEmpty()) {
             RuleSet rs = parse(json);
-            // 解析失败会拿到默认值，名字会变成「通用规则」，这没问题
+
             return rs;
         }
         return loadBuiltin(ctx);
@@ -89,8 +78,6 @@ public class RuleSet {
         return sb.toString();
     }
 
-    // ==================== 解析 ====================
-
     public static RuleSet parse(String json) {
         RuleSet rs = new RuleSet();
         try {
@@ -99,10 +86,10 @@ public class RuleSet {
             rs.author = o.optString("author", "");
             rs.version = o.optInt("version", 1);
             rs.description = o.optString("description", "");
+            rs.target = RuleType.normalize(o.optString("target", RuleType.DRIVE));
             rs.doubleCritBonus = o.optInt("doubleCritBonus", 3);
             rs.fallback = o.optString("fallback", "垃圾");
 
-            // weights
             JSONObject w = o.optJSONObject("weights");
             if (w != null) {
                 java.util.Iterator<String> it = w.keys();
@@ -112,7 +99,6 @@ public class RuleSet {
                 }
             }
 
-            // groups
             JSONObject g = o.optJSONObject("groups");
             if (g != null) {
                 java.util.Iterator<String> it = g.keys();
@@ -127,7 +113,6 @@ public class RuleSet {
                 }
             }
 
-            // colors
             JSONObject c = o.optJSONObject("colors");
             if (c != null) {
                 java.util.Iterator<String> it = c.keys();
@@ -137,7 +122,6 @@ public class RuleSet {
                 }
             }
 
-            // rules
             JSONArray arr = o.optJSONArray("rules");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -160,7 +144,6 @@ public class RuleSet {
         return rs;
     }
 
-    /** 兜底：解析失败时用硬编码规则 */
     public static RuleSet defaultSet() {
         RuleSet rs = new RuleSet();
         rs.name = "通用规则";
@@ -222,24 +205,15 @@ public class RuleSet {
         return rs;
     }
 
-    /** 取等级颜色 */
     public String colorOf(String grade) {
         String c = colors.get(grade);
-        return c != null ? c : "#AAAAAA";
+        return (c == null || c.trim().isEmpty()) ? "#AAAAAA" : c;
     }
 
-    // ==================== 词条着色 ====================
-
-    /** 金色：权重达最高值一半以上 */
     public static final String COLOR_HIGH = "#FFB300";
-    /** 白色：其余词条 */
+
     public static final String COLOR_NORMAL = "#E8EAED";
 
-    /**
-     * 按权重给词条着色，只分两档：
-     *   权重 >= 最高权重 / 2  → 金色
-     *   其余                  → 白色
-     */
     public String colorForAffix(String affix) {
         if (affix == null) return COLOR_NORMAL;
         Integer w = weights.get(affix);
@@ -252,9 +226,6 @@ public class RuleSet {
         return w * 2 >= max ? COLOR_HIGH : COLOR_NORMAL;
     }
 
-    // ==================== 导出 ====================
-
-    /** 序列化为 JSON 文本，用于保存 / 导出 */
     public String toJson() {
         try {
             org.json.JSONObject o = new org.json.JSONObject();
@@ -262,6 +233,7 @@ public class RuleSet {
             o.put("author", author);
             o.put("version", version);
             o.put("description", description);
+            o.put("target", target);
             o.put("doubleCritBonus", doubleCritBonus);
             o.put("fallback", fallback);
 
@@ -312,7 +284,6 @@ public class RuleSet {
         }
     }
 
-    /** 深拷贝（编辑时用副本，取消不影响原对象） */
     public RuleSet copy() {
         RuleSet rs = new RuleSet();
         rs.name = name;
@@ -340,7 +311,6 @@ public class RuleSet {
         return rs;
     }
 
-    /** 固定词条列表（驱动块 11 项） */
     public static List<String> affixList() {
         List<String> l = new ArrayList<>();
         l.add("暴击率");

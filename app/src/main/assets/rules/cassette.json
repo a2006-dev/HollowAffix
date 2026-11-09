@@ -3,6 +3,7 @@
   "author": "AJX",
   "version": 4,
   "description": "总分制：主属性 + 四副词条，按套装类型套用不同权重",
+  "target": "cassette",
   "mainAffixes": [
     "生命值百分比",
     "攻击力百分比",

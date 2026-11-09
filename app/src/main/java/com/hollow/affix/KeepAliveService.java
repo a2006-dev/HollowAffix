@@ -8,11 +8,6 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
 
-/**
- * 前台服务：只做保活。
- * vivo 等 ROM 会在内存回收时杀掉 App 并解绑无障碍服务，
- * 挂一个前台通知能大幅降低被杀概率。
- */
 public class KeepAliveService extends Service {
 
     private static final String CH_ID = "hollow_keep";
@@ -34,7 +29,7 @@ public class KeepAliveService extends Service {
                     (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (nm != null && nm.getNotificationChannel(CH_ID) == null) {
                 NotificationChannel ch = new NotificationChannel(
-                        CH_ID, "驱动块识别", NotificationManager.IMPORTANCE_MIN);
+                        CH_ID, "异环OCR服务", NotificationManager.IMPORTANCE_LOW);
                 ch.setShowBadge(false);
                 ch.enableLights(false);
                 ch.enableVibration(false);
@@ -47,11 +42,11 @@ public class KeepAliveService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        return b.setContentTitle("驱动块识别")
-                .setContentText("识别服务运行中")
+        return b.setContentTitle("异环OCR服务")
+                .setContentText("OCR 识别服务运行中")
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setOngoing(true)
-                .setPriority(Notification.PRIORITY_MIN)
+                .setPriority(Notification.PRIORITY_LOW)
                 .build();
     }
 

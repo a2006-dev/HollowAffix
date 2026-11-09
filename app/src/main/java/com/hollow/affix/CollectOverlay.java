@@ -11,12 +11,6 @@ import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
-/**
- * 坐标采集覆盖层 + 放大镜
- *
- * 拖框时在屏幕上方显示放大镜，实时显示手指附近的画面（放大 3 倍），
- * 解决小按钮被手指挡住、看不清框到哪里的问题。
- */
 @SuppressLint("ViewConstructor")
 public class CollectOverlay extends View {
 
@@ -72,8 +66,19 @@ public class CollectOverlay extends View {
     }
 
     public void setSnapshot(Bitmap bmp) {
+
+        if (snapshot != null && snapshot != bmp && !snapshot.isRecycled()) {
+            snapshot.recycle();
+        }
         this.snapshot = bmp;
         invalidate();
+    }
+
+    public void release() {
+        if (snapshot != null && !snapshot.isRecycled()) {
+            snapshot.recycle();
+        }
+        snapshot = null;
     }
 
     public void setListener(Listener l) { this.listener = l; }
@@ -107,7 +112,7 @@ public class CollectOverlay extends View {
     }
 
     private void drawLens(Canvas c) {
-        // 放大镜外框始终绘制（即使快照未就绪）
+
         float lensX = getWidth() / 2f - LENS_SIZE / 2f;
         float lensY = 70f;
         lensRect = new RectF(lensX, lensY, lensX + LENS_SIZE, lensY + LENS_SIZE);
@@ -128,7 +133,7 @@ public class CollectOverlay extends View {
             c.drawBitmap(snapshot, src, lensRect, null);
             c.restore();
         } else {
-            // 快照未就绪：显示提示
+
             Paint tp = new Paint(textPaint);
             tp.setTextSize(24f);
             tp.setTextAlign(Paint.Align.CENTER);
@@ -152,7 +157,7 @@ public class CollectOverlay extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
-        // 用 raw 坐标（屏幕绝对），避免窗口内边距导致偏移
+
         curX = e.getRawX();
         curY = e.getRawY();
 

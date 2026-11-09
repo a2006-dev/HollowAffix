@@ -21,15 +21,7 @@ import android.widget.TextView;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-/**
- * 规则编辑器：驱动块 5 页（基本 / 权重 / 判定 / 组 / 等级）。
- *
- * 打开方式：
- *   open(ctx, null, TYPE_DRIVE)        新建
- *   open(ctx, file, TYPE_DRIVE)        编辑已有
- */
 public class RuleEditorActivity extends Activity {
 
     private static final String C_BG = "#0A0E14";
@@ -43,9 +35,8 @@ public class RuleEditorActivity extends Activity {
 
     private static final String[] PAGES = {"基本", "权重", "判定", "组", "等级"};
 
-    /** 编辑中的规则（副本） */
     private RuleSet rs;
-    /** 源文件，null 表示新建 */
+
     private File srcFile;
     private int page = 0;
 
@@ -53,7 +44,6 @@ public class RuleEditorActivity extends Activity {
     private LinearLayout bodyBox;
     private TextView[] pageTabs = new TextView[PAGES.length];
 
-    // 静态入口
     private static File pendingFile;
     private static int pendingType;
     private static Runnable pendingDone;
@@ -65,7 +55,6 @@ public class RuleEditorActivity extends Activity {
         ctx.startActivity(i);
     }
 
-    /** 打开系统文件选择器导入 */
     public static void pickImportFile(Context ctx, int type, Runnable done) {
         pendingType = type;
         pendingDone = done;
@@ -90,13 +79,12 @@ public class RuleEditorActivity extends Activity {
         srcFile = (path == null || path.isEmpty()) ? null : new File(path);
 
         if (type == RuleStore.TYPE_CASSETTE) {
-            // 空幕编辑器后续接入
+
             android.widget.Toast.makeText(this, "空幕编辑器开发中", android.widget.Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
 
-        // 载入规则
         if (srcFile != null && srcFile.exists()) {
             try {
                 String json = RuleStore.readJsonFile(srcFile);
@@ -114,15 +102,12 @@ public class RuleEditorActivity extends Activity {
         buildUI();
     }
 
-    // ==================== UI ====================
-
     private void buildUI() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor(C_BG));
         root.setPadding(dp(16), dp(26), dp(16), dp(12));
 
-        // 顶栏
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -143,7 +128,6 @@ public class RuleEditorActivity extends Activity {
 
         root.addView(head);
 
-        // 页签（可横向滚动）
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         pageBar = new LinearLayout(this);
@@ -168,7 +152,6 @@ public class RuleEditorActivity extends Activity {
         hs.addView(pageBar);
         root.addView(hs);
 
-        // 内容
         ScrollView sv = new ScrollView(this);
         bodyBox = new LinearLayout(this);
         bodyBox.setOrientation(LinearLayout.VERTICAL);
@@ -199,8 +182,6 @@ public class RuleEditorActivity extends Activity {
         }
     }
 
-    // ---------- 页 1：基本 ----------
-
     private void renderBasic() {
         bodyBox.addView(labeledInput("规则名 *", rs.name, s -> rs.name = s));
         bodyBox.addView(labeledInput("作者", rs.author, s -> rs.author = s));
@@ -208,11 +189,29 @@ public class RuleEditorActivity extends Activity {
         bodyBox.addView(numberInput("版本", String.valueOf(rs.version), v -> {
             if (v >= 1) rs.version = v;
         }));
+
+        bodyBox.addView(sectionTitle("适用目标"));
+        bodyBox.addView(pickRow("识别对象", RuleType.label(rs.target), () -> {
+            String[] opts = {RuleType.DRIVE, RuleType.CASSETTE, RuleType.BOTH};
+            String[] names = {"驱动块", "空幕", "两者都识别"};
+            int cur = 0;
+            for (int i = 0; i < opts.length; i++) if (opts[i].equals(rs.target)) cur = i;
+            new AlertDialog.Builder(this)
+                    .setTitle("识别对象")
+                    .setSingleChoiceItems(names, cur, (d, which) -> {
+                        rs.target = opts[which];
+                        d.dismiss();
+                        renderPage();
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        }));
+        bodyBox.addView(hintText("选「驱动块」时，遇到空幕面板会自动跳过不识别"));
+
         bodyBox.addView(numberInput("双爆加成", String.valueOf(rs.doubleCritBonus), v -> {
             if (v >= 0) rs.doubleCritBonus = v;
         }));
 
-        // 兜底等级
         bodyBox.addView(sectionTitle("兜底等级"));
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -259,8 +258,6 @@ public class RuleEditorActivity extends Activity {
         return out;
     }
 
-    // ---------- 页 2：权重 ----------
-
     private void renderWeights() {
         bodyBox.addView(hintText("词条名固定 11 项，填权重分值（≥ 0）。权重高于最高值一半的词条会显示金色。"));
 
@@ -272,8 +269,6 @@ public class RuleEditorActivity extends Activity {
         }
     }
 
-    // ---------- 页 3：判定 ----------
-
     private void renderRules() {
         bodyBox.addView(hintText("按顺序从上到下匹配，命中即停。拖动不方便，用 ↑↓ 调顺序。"));
 
@@ -283,7 +278,6 @@ public class RuleEditorActivity extends Activity {
 
             LinearLayout card = card();
 
-            // 头：序号 + 等级 + 上下移 + 删除
             LinearLayout h = new LinearLayout(this);
             h.setOrientation(LinearLayout.HORIZONTAL);
             h.setGravity(Gravity.CENTER_VERTICAL);
@@ -316,13 +310,11 @@ public class RuleEditorActivity extends Activity {
 
             card.addView(h);
 
-            // 条件
             TextView cond = tv(describeRule(rule), 11, C_SUB, false);
             cond.setPadding(0, dp(6), 0, dp(4));
             cond.setLineSpacing(dp(3), 1f);
             card.addView(cond);
 
-            // 条件编辑按钮
             LinearLayout ops = new LinearLayout(this);
             ops.setOrientation(LinearLayout.HORIZONTAL);
             ops.setPadding(0, dp(6), 0, 0);
@@ -335,7 +327,6 @@ public class RuleEditorActivity extends Activity {
             bodyBox.addView(card, wrapLp(8));
         }
 
-        // 添加按钮
         TextView add = bigBtn("+ 添加规则", C_CARD2);
         add.setOnClickListener(v -> {
             RuleSet.Rule r = new RuleSet.Rule();
@@ -383,7 +374,7 @@ public class RuleEditorActivity extends Activity {
     private void pickGrade(final int ruleIdx) {
         List<String> grades = collectGradeNames();
         if (grades.isEmpty()) {
-            // 没有等级时直接输入
+
             askText("等级名", "", s -> {
                 if (!s.isEmpty()) {
                     rs.rules.get(ruleIdx).grade = s;
@@ -410,7 +401,6 @@ public class RuleEditorActivity extends Activity {
         });
     }
 
-    /** 编辑某条规则的条件 */
     private void editCondition(final int idx) {
         final RuleSet.Rule rule = rs.rules.get(idx);
 
@@ -418,11 +408,6 @@ public class RuleEditorActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(16), dp(10), dp(16), dp(10));
         box.setBackgroundColor(Color.parseColor(C_BG));
-
-        // requireAny 是单选模式，这里简化：
-        // require 多选（必须同时满足）
-        // requireAny 多选（至少一个）
-        // minCount 数字
 
         TextView t1 = sectionTitle("必须同时满足");
         box.addView(t1);
@@ -497,8 +482,6 @@ public class RuleEditorActivity extends Activity {
                 String.valueOf(rule.minCount), v -> rule.minCount = Math.max(0, v)));
         return box;
     }
-
-    // ---------- 页 4：组 ----------
 
     private void renderGroups() {
         bodyBox.addView(hintText("组是词条的集合。判定条件里写组名，等于要求组内成员。\n"
@@ -596,8 +579,6 @@ public class RuleEditorActivity extends Activity {
                 .show();
     }
 
-    // ---------- 页 5：等级 ----------
-
     private void renderGrades() {
         bodyBox.addView(hintText("等级名和颜色可改。驱动块不按分数分档，"
                 + "等级取决于命中的判定规则；这里只改颜色。"));
@@ -654,7 +635,6 @@ public class RuleEditorActivity extends Activity {
         }
     }
 
-    /** 改名时同步更新 rule.grade / fallback / colors */
     private void renameGrade(String from, String to) {
         for (RuleSet.Rule r : rs.rules) {
             if (from.equals(r.grade)) r.grade = to;
@@ -664,8 +644,6 @@ public class RuleEditorActivity extends Activity {
         rs.colors.put(to, c == null ? "#AAAAAA" : c);
         renderPage();
     }
-
-    // ==================== 保存 ====================
 
     private void onSave() {
         RuleValidator.Report rep = RuleValidator.validateDrive(rs, RuleSet.affixList());
@@ -689,12 +667,9 @@ public class RuleEditorActivity extends Activity {
         }
     }
 
-    // ==================== 通用 UI 组件 ====================
-
     private interface TextCb { void onText(String s); }
     private interface NumCb { void onNum(int v); }
 
-    /** 带标签的文本输入 */
     private View labeledInput(String label, String value, final TextCb cb) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
@@ -724,7 +699,6 @@ public class RuleEditorActivity extends Activity {
         return row;
     }
 
-    /** 数字输入 */
     private View numberInput(String label, String value, final NumCb cb) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -807,6 +781,25 @@ public class RuleEditorActivity extends Activity {
         t.setLineSpacing(dp(4), 1f);
         t.setPadding(0, dp(4), 0, dp(10));
         return t;
+    }
+
+    private LinearLayout pickRow(String label, String value, Runnable onClick) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setBackground(bg(C_CARD, 10, "#1FFFFFFF"));
+
+        TextView l = tv(label, 13, C_TEXT, false);
+        row.addView(l, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView v = tv(value, 13, C_ACCENT, true);
+        v.setPadding(dp(10), dp(5), dp(10), dp(5));
+        v.setBackground(bg("#207C4DFF", 6, C_ACCENT));
+        v.setOnClickListener(x -> onClick.run());
+        row.addView(v);
+        return row;
     }
 
     private TextView miniBtn(String s, Runnable r) {

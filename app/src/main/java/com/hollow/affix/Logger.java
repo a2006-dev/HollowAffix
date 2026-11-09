@@ -9,20 +9,15 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/**
- * 统一日志与数据导出。全部落到 /sdcard/HollowAffix/，纯文本，方便直接读取。
- */
 public class Logger {
 
-    // 优先用 /sdcard/HollowAffix（有「所有文件访问」权限时最方便读取）
-    // 没有权限时退回 App 私有外部目录，保证一定能写
     public static final File DIR = resolveDir();
 
     private static File resolveDir() {
         File primary = new File(Environment.getExternalStorageDirectory(), "HollowAffix");
         try {
             if (primary.exists() || primary.mkdirs()) {
-                // 验证真的可写
+
                 File probe = new File(primary, ".w");
                 if (probe.createNewFile() || probe.exists()) {
                     probe.delete();
@@ -31,7 +26,7 @@ public class Logger {
             }
         } catch (Throwable ignored) {
         }
-        // 兜底：App 外部私有目录，无需任何权限
+
         File fallback = null;
         try {
             File ext = ContextHolder.get().getExternalFilesDir(null);
@@ -102,31 +97,52 @@ public class Logger {
 
     public static String getMemLog() { return memLog.toString(); }
 
-    /** 追加写入指定数据文件（同时打 logcat，方便文件写不进去时排查） */
+    private static final java.util.Map<String, StringBuilder> pending =
+            new java.util.HashMap<>();
+
     public static synchronized void appendTo(String fileName, String content) {
         android.util.Log.i("PROBE_" + fileName.replace(".txt", ""), content);
+        StringBuilder sb = pending.get(fileName);
+        if (sb == null) {
+            sb = new StringBuilder();
+            pending.put(fileName, sb);
+        }
+        sb.append(content);
+        if (!content.endsWith("\n")) sb.append('\n');
+
+        if (sb.length() > 256 * 1024) flush(fileName);
+    }
+
+    public static synchronized void flushAll() {
+        for (String name : new java.util.ArrayList<>(pending.keySet())) {
+            flush(name);
+        }
+    }
+
+    public static synchronized void flush(String fileName) {
+        StringBuilder sb = pending.get(fileName);
+        if (sb == null || sb.length() == 0) return;
+        String data = sb.toString();
+        sb.setLength(0);
         try {
             File f = new File(DIR, fileName);
             boolean isNew = !f.exists();
             FileWriter fw = new FileWriter(f, true);
-            if (isNew) {
-                fw.write("# 空幕探测数据 " + FULL.format(new Date()) + "\n");
-            }
-            fw.write(content);
-            if (!content.endsWith("\n")) fw.write("\n");
+            if (isNew) fw.write("# 空幕探测数据 " + FULL.format(new Date()) + "\n");
+            fw.write(data);
             fw.close();
         } catch (Exception e) {
             android.util.Log.e("PROBE", "写入 " + fileName + " 失败: " + e, e);
         }
     }
 
-    /** 保存调试截图（区域裁剪预览 + 整图），用于核对坐标。 */
     public static boolean saveDebug(Bitmap src, int[] region, String tag) {
         try {
             File dir = new File(DIR, "debug");
             if (!dir.exists()) dir.mkdirs();
 
-            // 整图（缩放一半，省空间）
+            markNoMedia(dir);
+
             File full = new File(dir, tag + "_full.jpg");
             int fw = src.getWidth() / 2, fh = src.getHeight() / 2;
             Bitmap half = Bitmap.createScaledBitmap(src, fw, fh, true);
@@ -135,7 +151,6 @@ public class Logger {
             fos.close();
             half.recycle();
 
-            // 裁剪区域 + 红框标注
             if (region != null) {
                 int rx = Math.max(0, region[0]), ry = Math.max(0, region[1]);
                 int rw = Math.min(region[2], src.getWidth() - rx);
@@ -151,7 +166,6 @@ public class Logger {
                     cos.close();
                     crop.recycle();
 
-                    // 整图 + 红框
                     Bitmap marked = src.copy(Bitmap.Config.ARGB_8888, true);
                     new android.graphics.Canvas(marked).drawRect(
                             rx, ry, rx + rw, ry + rh, redStroke());
@@ -187,6 +201,128 @@ public class Logger {
         if (fs != null) for (File f : fs) {
             if (f.getName().startsWith("frame_")) f.delete();
         }
+    }
+
+    public static void markNoMedia(File dir) {
+        try {
+            if (dir == null) return;
+            if (!dir.exists()) dir.mkdirs();
+            File nm = new File(dir, ".nomedia");
+            if (!nm.exists()) {
+                nm.createNewFile();
+                Logger.appendTo("trace.txt", "已添加 .nomedia 到 " + dir.getName());
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    public static boolean hasNoMedia(File dir) {
+        return dir != null && new File(dir, ".nomedia").exists();
+    }
+
+    public static void cleanup() {
+        try {
+            markNoMedia(DIR);
+            markNoMedia(new File(DIR, "debug"));
+
+            long now = System.currentTimeMillis();
+            final long WEEK = 7L * 24 * 3600 * 1000;
+            final long DAY = 24L * 3600 * 1000;
+            final long MAX_LOG = 5L * 1024 * 1024;
+
+            File[] files = DIR.listFiles();
+            if (files == null) return;
+
+            int deletedSession = 0, truncated = 0, deletedShot = 0;
+
+            for (File f : files) {
+                if (f.isDirectory()) {
+
+                    if ("debug".equals(f.getName())) {
+                        File[] shots = f.listFiles();
+                        if (shots != null) {
+                            for (File s : shots) {
+                                if (s.getName().startsWith(".")) continue;
+                                if (now - s.lastModified() > DAY) {
+                                    if (s.delete()) deletedShot++;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                String name = f.getName();
+
+                if (name.startsWith("session_") && name.endsWith(".txt")) {
+                    if (now - f.lastModified() > WEEK) {
+                        if (f.delete()) deletedSession++;
+                    }
+                    continue;
+                }
+
+                if (name.endsWith(".txt") && f.length() > MAX_LOG) {
+                    if (truncateTail(f, 200 * 1024)) truncated++;
+                }
+            }
+
+            if (deletedSession > 0 || truncated > 0 || deletedShot > 0) {
+                String msg = "日志清理：删除旧 session " + deletedSession
+                        + " 个，截断大日志 " + truncated
+                        + " 个，删除旧截图 " + deletedShot + " 张";
+                Logger.i("CLEANUP", msg);
+                Logger.appendTo("trace.txt", msg);
+            }
+        } catch (Throwable e) {
+            android.util.Log.e("PROBE", "清理失败: " + e, e);
+        }
+    }
+
+    private static boolean truncateTail(File f, int keepBytes) {
+        try {
+            long len = f.length();
+            if (len <= keepBytes) return false;
+
+            java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "rw");
+            raf.seek(len - keepBytes);
+            byte[] buf = new byte[keepBytes];
+            int read = raf.read(buf);
+            raf.setLength(0);
+            raf.seek(0);
+            if (read > 0) {
+
+                int start = 0;
+                for (int i = 0; i < read - 1; i++) {
+                    if (buf[i] == '\n') { start = i + 1; break; }
+                }
+                raf.write(buf, start, read - start);
+            }
+            raf.close();
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    public static void purgeGalleryShots(android.content.Context ctx) {
+        try {
+            File dir = new File(DIR, "debug");
+            File[] shots = dir.listFiles();
+            if (shots == null || shots.length == 0) return;
+
+            java.util.List<String> paths = new java.util.ArrayList<>();
+            for (File s : shots) {
+                String n = s.getName().toLowerCase();
+                if (n.endsWith(".jpg") || n.endsWith(".png")) {
+                    if (s.delete()) paths.add(s.getAbsolutePath());
+                }
+            }
+            if (paths.isEmpty()) return;
+
+            android.media.MediaScannerConnection.scanFile(
+                    ctx, paths.toArray(new String[0]), null, null);
+
+            Logger.appendTo("trace.txt", "已清理相册中的调试截图 " + paths.size() + " 张");
+        } catch (Throwable ignored) {}
     }
 
     public static String dirPath() { return DIR.getAbsolutePath(); }

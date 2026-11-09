@@ -18,14 +18,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 规则管理页：切换 / 新建 / 编辑 / 删除 / 导入 / 导出。
- *
- * 分两个标签：驱动块、空幕。
- */
 public class RuleManagerView extends LinearLayout {
 
     private static final String C_BG = "#0A0E14";
@@ -41,9 +35,8 @@ public class RuleManagerView extends LinearLayout {
     private final Runnable onClose;
     private final Runnable onRuleChanged;
 
-    /** 当前标签页 */
     private int tab = RuleStore.TYPE_DRIVE;
-    /** 列表容器 */
+
     private LinearLayout listBox;
     private TextView tabDrive, tabCassette;
 
@@ -60,7 +53,6 @@ public class RuleManagerView extends LinearLayout {
         setBackgroundColor(Color.parseColor(C_BG));
         setPadding(dp(18), dp(30), dp(18), dp(20));
 
-        // 标题
         LinearLayout head = new LinearLayout(ctx);
         head.setOrientation(HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -81,7 +73,6 @@ public class RuleManagerView extends LinearLayout {
         hint.setPadding(0, dp(4), 0, dp(14));
         addView(hint);
 
-        // 标签
         LinearLayout tabs = new LinearLayout(ctx);
         tabs.setOrientation(HORIZONTAL);
         tabs.setPadding(0, 0, 0, dp(10));
@@ -104,7 +95,6 @@ public class RuleManagerView extends LinearLayout {
 
         addView(tabs);
 
-        // 列表
         ScrollView sv = new ScrollView(ctx);
         listBox = new LinearLayout(ctx);
         listBox.setOrientation(VERTICAL);
@@ -112,7 +102,6 @@ public class RuleManagerView extends LinearLayout {
         addView(sv, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // 底部按钮
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(HORIZONTAL);
         btns.setPadding(0, dp(12), 0, 0);
@@ -128,10 +117,8 @@ public class RuleManagerView extends LinearLayout {
         refresh();
     }
 
-    // ==================== 刷新列表 ====================
-
     private void refresh() {
-        // 标签样式
+
         styleTab(tabDrive, tab == RuleStore.TYPE_DRIVE);
         styleTab(tabCassette, tab == RuleStore.TYPE_CASSETTE);
 
@@ -139,11 +126,9 @@ public class RuleManagerView extends LinearLayout {
 
         String active = RuleStore.currentRule(tab);
 
-        // 内置规则
         RuleStore.Entry bi = RuleStore.builtinEntry(tab);
         listBox.addView(ruleRow(bi, active.isEmpty(), true));
 
-        // 外部规则
         List<RuleStore.Entry> list = RuleStore.list(tab);
         if (list.isEmpty()) {
             TextView empty = tv("暂无自定义规则\n点下方「新建」创建", 12, C_SUB, false);
@@ -157,7 +142,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 一行规则 */
     private View ruleRow(final RuleStore.Entry e, boolean isActive, boolean builtin) {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(HORIZONTAL);
@@ -185,6 +169,12 @@ public class RuleManagerView extends LinearLayout {
         TextView ver = tv("  v" + e.version, 11, C_SUB, false);
         nameRow.addView(ver);
 
+        if (e.target != null && !e.target.isEmpty()) {
+            TextView tTag = tv("  " + RuleType.label(e.target), 10,
+                    RuleType.BOTH.equals(RuleType.normalize(e.target)) ? C_OK : C_ACCENT, false);
+            nameRow.addView(tTag);
+        }
+
         if (builtin) {
             TextView tag = tv("  内置", 10, C_ACCENT, false);
             nameRow.addView(tag);
@@ -204,7 +194,6 @@ public class RuleManagerView extends LinearLayout {
         row.addView(col, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        // 右侧操作按钮（竖排）
         LinearLayout opsCol = new LinearLayout(ctx);
         opsCol.setOrientation(LinearLayout.VERTICAL);
         opsCol.setGravity(Gravity.CENTER_VERTICAL);
@@ -237,7 +226,6 @@ public class RuleManagerView extends LinearLayout {
         oclp.leftMargin = dp(8);
         row.addView(opsCol, oclp);
 
-        // 点击切换
         row.setOnClickListener(v -> {
             if (!e.valid) {
                 toast("规则损坏，无法启用");
@@ -253,7 +241,6 @@ public class RuleManagerView extends LinearLayout {
             toast("已切换到 " + e.name);
         });
 
-        // 长按删除
         if (!builtin) {
             row.setOnLongClickListener(v -> {
                 confirmDelete(e);
@@ -269,9 +256,6 @@ public class RuleManagerView extends LinearLayout {
         return row;
     }
 
-    // ==================== 操作 ====================
-
-    /** 新建 */
     private void onNew() {
         if (tab == RuleStore.TYPE_DRIVE) {
             RuleEditorActivity.open(ctx, null, RuleStore.TYPE_DRIVE);
@@ -280,7 +264,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 编辑 */
     private void onEdit(RuleStore.Entry e) {
         if (tab == RuleStore.TYPE_DRIVE) {
             RuleEditorActivity.open(ctx, e.file, tab);
@@ -289,7 +272,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 复制内置为自定义 */
     private void onCopyBuiltin() {
         try {
             String json = RuleStore.loadJson(ctx, tab);
@@ -319,7 +301,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 导入 */
     private void onImport() {
         RuleEditorActivity.pickImportFile(ctx, tab, () -> {
             refresh();
@@ -327,9 +308,6 @@ public class RuleManagerView extends LinearLayout {
         });
     }
 
-    // ==================== 导出 ====================
-
-    /** 导出外部规则 */
     private void onExport(RuleStore.Entry e) {
         try {
             String json = RuleStore.readJsonFile(e.file);
@@ -339,7 +317,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 导出内置规则（当前选中的那个） */
     private void onExportBuiltin() {
         try {
             String json = RuleStore.loadJson(ctx, tab);
@@ -359,10 +336,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /**
-     * 执行导出：文件名用规则名，写到 /sdcard/HollowAffix/export/
-     * 已存在则自动加序号，避免覆盖。
-     */
     private void doExport(String json, String ruleName) {
         try {
             File dir = new File(Logger.DIR, "export");
@@ -394,7 +367,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 通过系统分享把文件发出去 */
     private void shareFile(File f) {
         try {
             Intent i = new Intent(Intent.ACTION_SEND);
@@ -409,7 +381,6 @@ public class RuleManagerView extends LinearLayout {
         }
     }
 
-    /** 删除确认 */
     private void confirmDelete(final RuleStore.Entry e) {
         new AlertDialog.Builder(ctx)
                 .setTitle("删除规则")
@@ -431,7 +402,6 @@ public class RuleManagerView extends LinearLayout {
                 .show();
     }
 
-    /** 输入名称 */
     private void askName(String def, final NameCallback cb) {
         final EditText et = new EditText(ctx);
         et.setText(def);
@@ -458,9 +428,6 @@ public class RuleManagerView extends LinearLayout {
         void onName(String name);
     }
 
-    // ==================== UI 工具 ====================
-
-    /** 小胶囊按钮 */
     private TextView miniChip(String s, String color, Runnable r) {
         TextView t = tv(s, 11, color, false);
         t.setPadding(dp(10), dp(5), dp(10), dp(5));

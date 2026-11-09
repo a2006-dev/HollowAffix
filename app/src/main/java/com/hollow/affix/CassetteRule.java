@@ -11,14 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 空幕规则：卡带 / 驱动块的 主属性 + 副属性 + 套装 判定。
- *
- * 与驱动块（RuleSet）的区别：
- *  - 驱动块只看 4 条副词条，按 require/requireAny 做逻辑匹配
- *  - 卡带是「主属性 + 4 副词条」打分制，主属性权重远高于副词条
- *  - 还要识别套装名
- */
 public class CassetteRule {
 
     public String name = "空幕规则";
@@ -26,60 +18,53 @@ public class CassetteRule {
     public int version = 1;
     public String description = "";
 
-    /** 允许的主属性词条 */
+    public String target = RuleType.CASSETTE;
+
     public List<String> mainAffixes = new ArrayList<>();
-    /** 允许的副属性词条 */
+
     public List<String> subAffixes = new ArrayList<>();
 
-    /** 权重配置档，key = profile 名（elemDPS / genDPS / support / tank / hp / healer） */
     public Map<String, Profile> profiles = new LinkedHashMap<>();
 
-    /** 权重档 */
     public static class Profile {
         public String name = "";
         public String label = "";
-        /** 该类套装的主属性满分 + 副属性满配之和 */
+
         public int maxTotal = 100;
         public Map<String, Integer> mainWeights = new LinkedHashMap<>();
         public Map<String, Integer> subWeights = new LinkedHashMap<>();
     }
 
-    /** 双爆加成 */
     public int doubleCritBonus = 3;
 
-    /** 套装名列表 */
     public List<String> sets = new ArrayList<>();
 
-    /** 套装详细信息，key = 套装名 */
     public Map<String, SetDetail> setDetails = new LinkedHashMap<>();
 
-    /** 套装详情 */
     public static class SetDetail {
         public String name = "";
         public List<String> aliases = new ArrayList<>();
         public String element = "";
         public String type = "";
-        /** 对应的权重档名（elemDPS / genDPS / support / tank / hp / healer） */
+
         public String profile = "elemDPS";
-        /** 该套的本命主属性，空表示通用套 */
+
         public String matchElement = "";
         public String two = "";
         public String four = "";
         public String note = "";
     }
 
-    /** 等级定义，按顺序从高到低 */
     public List<Grade> grades = new ArrayList<>();
     public Map<String, String> colors = new LinkedHashMap<>();
 
     public static class Grade {
         public String name = "";
-        /** 占总满分的比例门槛 */
+
         public double ratio = 0;
         public String color = "#AAAAAA";
     }
 
-    /** 判定结果 */
     public static class Result {
         public String mainAffix = null;
         public int mainScore = 0;
@@ -87,20 +72,18 @@ public class CassetteRule {
         public int subScore = 0;
         public String set = null;
         public int total = 0;
-        /** 所属权重档标签，如「属性输出」 */
+
         public String profileName = "";
-        /** 该档满分 */
+
         public int maxTotal = 100;
-        /** 总分占比 */
+
         public double ratio = 0;
-        /** 主属性是否命中套装本命属性 */
+
         public boolean elementMatch = false;
         public String grade = "垃圾";
         public String color = "#787878";
         public String detail = "";
     }
-
-    // ==================== 加载 ====================
 
     public static CassetteRule loadBuiltin(android.content.Context ctx) {
         try {
@@ -117,9 +100,6 @@ public class CassetteRule {
         }
     }
 
-    /**
-     * 加载当前生效的空幕规则：外部文件优先，读不到用 assets 内置。
-     */
     public static CassetteRule load(android.content.Context ctx) {
         String json = RuleStore.loadJson(ctx, RuleStore.TYPE_CASSETTE);
         if (json != null && !json.trim().isEmpty()) {
@@ -136,13 +116,13 @@ public class CassetteRule {
             cr.author = o.optString("author", "");
             cr.version = o.optInt("version", 1);
             cr.description = o.optString("description", "");
+            cr.target = RuleType.normalize(o.optString("target", RuleType.CASSETTE));
             cr.doubleCritBonus = o.optInt("doubleCritBonus", 3);
 
             readArray(o.optJSONArray("mainAffixes"), cr.mainAffixes);
             readArray(o.optJSONArray("subAffixes"), cr.subAffixes);
             readArray(o.optJSONArray("sets"), cr.sets);
 
-            // 套装详情
             JSONArray sd = o.optJSONArray("setDetails");
             if (sd != null) {
                 for (int i = 0; i < sd.length(); i++) {
@@ -159,11 +139,11 @@ public class CassetteRule {
                     d.four = so.optString("four", "");
                     d.note = so.optString("note", "");
                     cr.setDetails.put(d.name, d);
-                    // 缺省补进 sets 列表
+
                     if (!cr.sets.contains(d.name)) cr.sets.add(d.name);
                 }
             }
-            // 权重配置档
+
             JSONObject po = o.optJSONObject("profiles");
             if (po != null) {
                 java.util.Iterator<String> it = po.keys();
@@ -227,7 +207,6 @@ public class CassetteRule {
         }
     }
 
-    /** 内置兜底规则（assets 读不到时使用） */
     public static CassetteRule defaultRule() {
         CassetteRule cr = new CassetteRule();
         for (String s : new String[]{"生命值百分比", "攻击力百分比", "防御力百分比",
@@ -243,7 +222,6 @@ public class CassetteRule {
             cr.subAffixes.add(s);
         }
 
-        // ---- elemDPS：属性输出 ----
         Profile elem = new Profile();
         elem.name = "elemDPS";
         elem.label = "属性输出";
@@ -263,7 +241,6 @@ public class CassetteRule {
         elem.subWeights.put("倾陷强度", 3);
         cr.profiles.put(elem.name, elem);
 
-        // ---- genDPS：通用输出 ----
         Profile gen = new Profile();
         gen.name = "genDPS";
         gen.label = "通用输出";
@@ -283,7 +260,6 @@ public class CassetteRule {
         gen.subWeights.put("倾陷强度", 3);
         cr.profiles.put(gen.name, gen);
 
-        // ---- support：辅助 ----
         Profile sup = new Profile();
         sup.name = "support";
         sup.label = "辅助";
@@ -309,7 +285,6 @@ public class CassetteRule {
         sup.subWeights.put("防御力", 2);
         cr.profiles.put(sup.name, sup);
 
-        // ---- tank：防御 ----
         Profile tank = new Profile();
         tank.name = "tank";
         tank.label = "防御";
@@ -330,7 +305,6 @@ public class CassetteRule {
         tank.subWeights.put("攻击力", 1);
         cr.profiles.put(tank.name, tank);
 
-        // ---- hp：生命 ----
         Profile hp = new Profile();
         hp.name = "hp";
         hp.label = "生命";
@@ -351,7 +325,6 @@ public class CassetteRule {
         hp.subWeights.put("攻击力", 1);
         cr.profiles.put(hp.name, hp);
 
-        // ---- healer：治疗 ----
         Profile healer = new Profile();
         healer.name = "healer";
         healer.label = "治疗";
@@ -372,7 +345,6 @@ public class CassetteRule {
         healer.subWeights.put("攻击力", 1);
         cr.profiles.put(healer.name, healer);
 
-        // ---- 等级 ----
         String[][] gs = {
                 {"大毕业", "0.84", "#FF4D4D"},
                 {"毕业", "0.67", "#FFB300"},
@@ -390,30 +362,31 @@ public class CassetteRule {
         return cr;
     }
 
-    // ==================== 识别归一 ====================
-
-    /**
-     * 把 OCR 文本归一成标准主属性名。
-     * 主属性文本形如「倾陷强度」「光属性异能伤害增强」，通常不带数值（数值在右侧）。
-     */
     public String matchMain(String raw) {
         if (raw == null) return null;
         String t = normalize(raw);
         if (t.isEmpty()) return null;
 
-        // 先做「最长精确包含」匹配，避免「生命值百分比」被「生命值」抢走
         String best = null;
         int bestLen = 0;
-        List<String> pool = mainAffixes.isEmpty() ? subAffixes : mainAffixes;
-        for (String m : pool) {
-            if (t.contains(m) && m.length() > bestLen) {
+        for (String m : mainAffixes) {
+            if (m != null && !m.isEmpty() && t.contains(m) && m.length() > bestLen) {
+                best = m;
+                bestLen = m.length();
+            }
+        }
+        for (String m : subAffixes) {
+            if (m != null && !m.isEmpty() && t.contains(m) && m.length() > bestLen) {
                 best = m;
                 bestLen = m.length();
             }
         }
         if (best != null) return best;
 
-        // 属性伤害：形如「X属性异能伤害增强」，X 可能被 OCR 读错
+        if (t.contains("攻击力")) return "攻击力";
+        if (t.contains("防御力")) return "防御力";
+        if (t.contains("生命值")) return "生命值";
+
         if (t.contains("异能伤害") || t.contains("属性异能")) {
             for (String e : new String[]{"光", "灵", "咒", "暗", "魂", "相"}) {
                 if (t.contains(e)) return e + "属性异能伤害增强";
@@ -424,18 +397,13 @@ public class CassetteRule {
         return null;
     }
 
-    /**
-     * 副属性归一。副属性文本带数值，如「伤害增加10.00%」「防御力增加80」。
-     * 复用 AffixMatcher 的词条映射，再用本规则的 subAffixes 校验。
-     */
     public String matchSub(String raw) {
         if (raw == null) return null;
         String t = normalize(raw);
         if (t.isEmpty()) return null;
 
-        // 通用伤害增强：OCR 常出现「伤害增加」「通用伤害」
         if (t.contains("伤害增加") || t.contains("通用伤害") || t.contains("伤害增强")) {
-            // 「X属性异能伤害增强」出现在副词条的情况不存在，但保险起见排除
+
             if (!t.contains("异能")) {
                 if (t.contains("通用") || t.contains("增加") || t.contains("增强")) {
                     return "通用伤害增强";
@@ -457,7 +425,6 @@ public class CassetteRule {
         return best;
     }
 
-    /** 套装名归一 */
     public String matchSet(String raw) {
         if (raw == null) return null;
         String t = raw.replace("「", "").replace("」", "")
@@ -466,19 +433,16 @@ public class CassetteRule {
                 .replaceAll("[\\s\\u3000]", "");
         if (t.isEmpty()) return null;
 
-        // 1) 正式名直接包含
         for (String s : sets) {
             if (t.contains(s)) return s;
         }
 
-        // 2) 别名包含
         for (SetDetail d : setDetails.values()) {
             for (String a : d.aliases) {
                 if (!a.isEmpty() && t.contains(a)) return d.name;
             }
         }
 
-        // 3) 去掉分隔符再比（OCR 常把「·」读成其他符号）
         String t2 = sep(t);
         for (String s : sets) {
             if (t2.contains(sep(s))) return s;
@@ -496,39 +460,23 @@ public class CassetteRule {
         return s.replaceAll("[·・••.。\\-—_]", "");
     }
 
-    /** 取套装详情，没有返回 null */
     public SetDetail detail(String setName) {
         if (setName == null) return null;
         return setDetails.get(setName);
     }
 
-    /** 去空格与常见干扰符号 */
     private static String normalize(String raw) {
         return raw.replaceAll("[\\s\\u3000]", "")
                 .replace("：", "").replace(":", "")
                 .replace("_", "").replace("—", "").replace("-", "");
     }
 
-    // ==================== 判定 ====================
-
-    /**
-     * 判定一套卡带 / 驱动块（总分制）。
-     *
-     * 规则：
-     *   1. 按套装找到对应 Profile（elemDPS / genDPS / support / tank / hp / healer）
-     *   2. 主属性分 = profile.mainWeights[主属性]
-     *      - 属性套若主属性等于该套的 matchElement，直接给该属性的最高权重
-     *   3. 副属性分 = Σ profile.subWeights + 双爆加成
-     *   4. 总分 = 主 + 副，按 profile.maxTotal 的比例查等级
-     *   5. 主属性 0 分 → 强制「垃圾」
-     */
     public Result evaluate(String mainAffix, List<String> subs, String set) {
         Result r = new Result();
         r.mainAffix = mainAffix;
         r.subAffixes.addAll(subs);
         r.set = set;
 
-        // ---- 找到权重档 ----
         SetDetail sd = detail(set);
         String pname = sd != null ? sd.profile : "elemDPS";
         Profile p = profiles.get(pname);
@@ -542,12 +490,10 @@ public class CassetteRule {
         r.profileName = p.label;
         r.maxTotal = p.maxTotal;
 
-        // ---- 主属性分 ----
         if (mainAffix != null) {
             Integer w = p.mainWeights.get(mainAffix);
             r.mainScore = w != null ? w : 0;
 
-            // 属性套 + 本命属性 → 提权到最高（表格里该属性写 10，命中时升到 32）
             if (sd != null && !sd.matchElement.isEmpty()
                     && sd.matchElement.equals(mainAffix)) {
                 r.mainScore = 32;
@@ -555,7 +501,6 @@ public class CassetteRule {
             }
         }
 
-        // ---- 主属性无效：整件作废，副词条不再计算 ----
         if (r.mainScore <= 0) {
             r.subScore = 0;
             r.total = 0;
@@ -566,7 +511,6 @@ public class CassetteRule {
             return r;
         }
 
-        // ---- 副属性分 ----
         int sum = 0;
         for (String s : subs) {
             Integer w = p.subWeights.get(s);
@@ -575,12 +519,10 @@ public class CassetteRule {
         if (subs.contains("暴击率") && subs.contains("暴击伤害")) sum += doubleCritBonus;
         r.subScore = sum;
 
-        // ---- 总分 ----
         r.total = r.mainScore + r.subScore;
         int max = Math.max(1, p.maxTotal);
         double ratio = r.total / (double) max;
 
-        // ---- 查等级 ----
         r.grade = null;
         for (Grade g : grades) {
             if (ratio >= g.ratio) {
@@ -603,24 +545,13 @@ public class CassetteRule {
 
     public String colorOf(String grade) {
         String c = colors.get(grade);
-        return c != null ? c : "#AAAAAA";
+        return (c == null || c.trim().isEmpty()) ? "#AAAAAA" : c;
     }
 
-    // ==================== 词条着色 ====================
-
-    /** 金色：权重达该档最高值一半以上 */
     public static final String COLOR_HIGH = "#FFB300";
-    /** 白色：其余词条 */
+
     public static final String COLOR_NORMAL = "#E8EAED";
 
-    /**
-     * 按套装对应权重档给副词条着色，只分两档：
-     *   权重 >= 该档副属性最高权重 / 2  → 金色
-     *   其余                            → 白色
-     *
-     * 例如 elemDPS 副属性最高 20（双爆），攻%/通用伤害 15 >= 10 也是金色；
-     *      tank 副属性最高 20（防%/生命%），防%/生命% 金色，防御/生命 13 >= 10 也金色。
-     */
     public String colorForSub(String setName, String affix) {
         if (affix == null) return COLOR_NORMAL;
         SetDetail sd = detail(setName);
@@ -639,9 +570,6 @@ public class CassetteRule {
         return w * 2 >= max ? COLOR_HIGH : COLOR_NORMAL;
     }
 
-    // ==================== 导出 ====================
-
-    /** 序列化为 JSON 文本 */
     public String toJson() {
         try {
             org.json.JSONObject o = new org.json.JSONObject();
@@ -649,6 +577,7 @@ public class CassetteRule {
             o.put("author", author);
             o.put("version", version);
             o.put("description", description);
+            o.put("target", target);
             o.put("doubleCritBonus", doubleCritBonus);
 
             org.json.JSONArray marr = new org.json.JSONArray();
@@ -725,7 +654,6 @@ public class CassetteRule {
         }
     }
 
-    /** 深拷贝，供编辑使用 */
     public CassetteRule copy() {
         CassetteRule cr = new CassetteRule();
         cr.name = name;
@@ -773,12 +701,10 @@ public class CassetteRule {
         return cr;
     }
 
-    /** 固定主属性列表（15 项） */
     public static List<String> mainAffixList() {
         return defaultRule().mainAffixes;
     }
 
-    /** 固定副属性列表（11 项） */
     public static List<String> subAffixList() {
         return defaultRule().subAffixes;
     }

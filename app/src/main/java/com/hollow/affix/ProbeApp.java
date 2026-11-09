@@ -9,5 +9,12 @@ public class ProbeApp extends Application {
         super.onCreate();
         ContextHolder.init(this);
         Logger.initSession();
+
+        new Thread(() -> {
+            try {
+                Logger.cleanup();
+                Logger.purgeGalleryShots(this);
+            } catch (Throwable ignored) {}
+        }, "cleanup").start();
     }
 }

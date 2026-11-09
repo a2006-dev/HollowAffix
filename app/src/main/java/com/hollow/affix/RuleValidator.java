@@ -6,16 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 规则校验：保存 / 导入前执行，收集所有问题。
- *
- * 校验分两类：
- *   错误(error) —— 必须修复才能保存
- *   警告(warn)  —— 可以保存，但可能不是本意
- */
 public class RuleValidator {
 
-    /** 单条问题 */
     public static class Issue {
         public final String field;
         public final String message;
@@ -33,7 +25,6 @@ public class RuleValidator {
         }
     }
 
-    /** 校验结果 */
     public static class Report {
         public final List<Issue> issues = new ArrayList<>();
 
@@ -72,19 +63,11 @@ public class RuleValidator {
         }
     }
 
-    /** 判断颜色是否合法 #RRGGBB */
     private static boolean validColor(String c) {
         if (c == null) return false;
         return c.matches("^#[0-9A-Fa-f]{6}$");
     }
 
-    // ==================== 驱动块 ====================
-
-    /**
-     * 校验驱动块规则。
-     * @param rs 规则对象
-     * @param knownAffixes 合法词条名（固定 11 项）
-     */
     public static Report validateDrive(RuleSet rs, List<String> knownAffixes) {
         Report r = new Report();
 
@@ -99,7 +82,6 @@ public class RuleValidator {
             r.err("判定规则", "至少需要 1 条规则");
         }
 
-        // 权重
         Set<String> affixSet = new HashSet<>(knownAffixes);
         for (Map.Entry<String, Integer> e : rs.weights.entrySet()) {
             String k = e.getKey();
@@ -122,7 +104,6 @@ public class RuleValidator {
             }
         }
 
-        // 组
         for (Map.Entry<String, List<String>> e : rs.groups.entrySet()) {
             String g = e.getKey();
             List<String> mem = e.getValue();
@@ -141,7 +122,6 @@ public class RuleValidator {
             }
         }
 
-        // 判定规则
         Set<String> gradeNames = new HashSet<>();
         for (int i = 0; i < rs.rules.size(); i++) {
             RuleSet.Rule rule = rs.rules.get(i);
@@ -172,14 +152,12 @@ public class RuleValidator {
             }
         }
 
-        // 兜底等级
         if (rs.fallback == null || rs.fallback.trim().isEmpty()) {
             r.err("兜底等级", "不能为空");
         } else if (!gradeNames.contains(rs.fallback)) {
             r.warn("兜底等级", "「" + rs.fallback + "」不在判定规则的等级中");
         }
 
-        // 颜色
         for (Map.Entry<String, String> e : rs.colors.entrySet()) {
             if (!validColor(e.getValue())) {
                 r.err("颜色/" + e.getKey(), "格式必须是 #RRGGBB");
@@ -198,14 +176,6 @@ public class RuleValidator {
         return r;
     }
 
-    // ==================== 空幕 ====================
-
-    /**
-     * 校验空幕规则。
-     * @param cr 空幕规则
-     * @param knownMain 合法主属性名（15 项）
-     * @param knownSub  合法副属性名（11 项）
-     */
     public static Report validateCassette(CassetteRule cr,
                                           List<String> knownMain,
                                           List<String> knownSub) {
@@ -218,7 +188,6 @@ public class RuleValidator {
             r.err("版本", "必须 >= 1");
         }
 
-        // 等级：必须从高到低，ratio 递减
         if (cr.grades.isEmpty()) {
             r.err("等级", "至少需要 1 个等级");
         }
@@ -241,7 +210,6 @@ public class RuleValidator {
             }
         }
 
-        // 权重档
         if (cr.profiles.isEmpty()) {
             r.err("权重档", "至少需要 1 个权重档");
         }
@@ -287,7 +255,6 @@ public class RuleValidator {
             }
         }
 
-        // 套装
         if (cr.setDetails.isEmpty()) {
             r.err("套装", "至少需要 1 个套装");
         }
@@ -312,7 +279,6 @@ public class RuleValidator {
             }
         }
 
-        // 配色与等级对应
         Set<String> gradeNames = new HashSet<>();
         for (CassetteRule.Grade g : cr.grades) {
             if (g.name != null) gradeNames.add(g.name);
@@ -333,9 +299,6 @@ public class RuleValidator {
         return r;
     }
 
-    // ==================== JSON 结构预检 ====================
-
-    /** 粗略检查 JSON 是否像驱动块规则 */
     public static Report checkDriveJson(String json) {
         Report r = new Report();
         if (json == null || json.trim().isEmpty()) {
@@ -353,7 +316,6 @@ public class RuleValidator {
         return r;
     }
 
-    /** 粗略检查 JSON 是否像空幕规则 */
     public static Report checkCassetteJson(String json) {
         Report r = new Report();
         if (json == null || json.trim().isEmpty()) {

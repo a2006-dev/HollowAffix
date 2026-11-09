@@ -19,14 +19,8 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import java.io.File;
-
-/**
- * 主界面：深色卡片风。
- */
 public class MainActivity extends AppCompatActivity {
 
-    // 配色
     private static final String C_BG = "#0A0E14";
     private static final String C_CARD = "#151A22";
     private static final String C_CARD2 = "#1C2330";
@@ -59,7 +53,6 @@ public class MainActivity extends AppCompatActivity {
         container.setPadding(dp(18), dp(36), dp(18), dp(36));
         sv.addView(container);
 
-        // ===== 标题 =====
         TextView title = tv("异环OCR助手", 26, C_TEXT, true);
         container.addView(title);
 
@@ -67,7 +60,6 @@ public class MainActivity extends AppCompatActivity {
         sub.setPadding(0, dp(4), 0, dp(20));
         container.addView(sub);
 
-        // ===== 当前规则卡片 =====
         LinearLayout ruleCard = card(C_CARD, 16);
         ruleCard.setPadding(dp(16), dp(14), dp(16), dp(14));
         ruleCard.setOnClickListener(v -> openRuleManager());
@@ -95,7 +87,6 @@ public class MainActivity extends AppCompatActivity {
         tvRuleName.setPadding(0, dp(6), 0, dp(2));
         ruleCard.addView(tvRuleName);
 
-        // 徽章：外部规则显示「自定义」，否则「内置」
         View badgeV = ruleHead.findViewWithTag("badge");
         if (badgeV instanceof TextView) {
             boolean custom = !RuleStore.currentRule(RuleStore.TYPE_DRIVE).isEmpty();
@@ -112,7 +103,6 @@ public class MainActivity extends AppCompatActivity {
         tvRuleInfo = tv(info.toString(), 11, C_SUB, false);
         ruleCard.addView(tvRuleInfo);
 
-        // 等级预览
         LinearLayout gradeRow = new LinearLayout(this);
         gradeRow.setOrientation(LinearLayout.HORIZONTAL);
         gradeRow.setPadding(0, dp(10), 0, 0);
@@ -132,7 +122,6 @@ public class MainActivity extends AppCompatActivity {
 
         container.addView(ruleCard, wrapLp(0, 12));
 
-        // ===== 权限 =====
         section("权限");
 
         tvAcc = permCard("无障碍服务", "截屏识别必需", v -> {
@@ -163,22 +152,15 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // ===== 自动操作 =====
         section("自动操作");
         buildAutoCard();
 
-        // ===== 操作 =====
         section("操作");
 
         TextView btnFloat = bigBtn("打开悬浮窗", C_ACCENT);
         btnFloat.setOnClickListener(v -> toggleFloat());
         container.addView(btnFloat, wrapLp(0, 10));
 
-        TextView btnTest = midBtn("测试识别（用相册图）", C_CARD2);
-        btnTest.setOnClickListener(v -> toast("功能开发中"));
-        container.addView(btnTest, wrapLp(0, 8));
-
-        // ===== 信息 =====
         section("设备");
         TextView tvDev = tv("", 11, C_SUB, false);
         tvDev.setLineSpacing(dp(4), 1f);
@@ -194,7 +176,6 @@ public class MainActivity extends AppCompatActivity {
         boolean ov = Settings.canDrawOverlays(this);
         boolean fl = isFileOn();
 
-        // 无障碍服务
         if (tvAcc != null) {
             tvAcc.setText((acc ? "✓ " : "✗ ") + "无障碍服务");
             tvAcc.setTextColor(Color.parseColor(acc ? C_OK : C_ERR));
@@ -270,23 +251,18 @@ public class MainActivity extends AppCompatActivity {
         refresh();
     }
 
-    // ==================== 规则管理 ====================
-
-    /** 打开规则管理页 */
     private void openRuleManager() {
         setContentView(new RuleManagerView(this,
                 () -> {
-                    // 关闭：回到主界面
+
                     buildUI();
                 },
                 () -> {
-                    // 规则变更：重载当前规则，悬浮窗若开着也立即生效
+
                     ruleSet = RuleSet.load(this);
                     if (fw != null) fw.reloadRules();
                 }));
     }
-
-    // ==================== 自动操作卡片 ====================
 
     private LinearLayout autoCard;
 
@@ -301,9 +277,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void rebuildAutoRows() {
+
+        AutoRule.sync(ruleSet);
         autoCard.removeAllViews();
 
-        // ===== 总开关 =====
         LinearLayout switchRow = new LinearLayout(this);
         switchRow.setOrientation(LinearLayout.HORIZONTAL);
         switchRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -314,7 +291,7 @@ public class MainActivity extends AppCompatActivity {
         TextView swName = tv("自动化", 14, C_TEXT, true);
         switchCol.addView(swName);
 
-        TextView swDesc = tv("关闭后悬浮窗不执行任何自动操作", 10, C_SUB, false);
+        TextView swDesc = tv("总开关：关闭后既不自动锁定，也不自动翻页", 10, C_SUB, false);
         swDesc.setPadding(0, dp(2), 0, 0);
         switchCol.addView(swDesc);
 
@@ -330,14 +307,17 @@ public class MainActivity extends AppCompatActivity {
                 ? bg("#CC2E7D32", 8, null)
                 : bg("#1AFFFFFF", 8, "#40FFFFFF"));
         sw.setOnClickListener(v -> {
-            AutoRule.setEnabled(!AutoRule.isEnabled());
+            boolean next = !AutoRule.isEnabled();
+            AutoRule.setEnabled(next);
+
+            AutoSwitch.setEnabled(this, next);
+            if (fw != null) fw.syncAutoSwitch(next);
             rebuildAutoRows();
         });
         switchRow.addView(sw);
 
         autoCard.addView(switchRow);
 
-        // 分隔
         View sp0 = new View(this);
         sp0.setBackgroundColor(Color.parseColor("#1AFFFFFF"));
         LinearLayout.LayoutParams sp0l = new LinearLayout.LayoutParams(
@@ -346,14 +326,12 @@ public class MainActivity extends AppCompatActivity {
         sp0l.bottomMargin = dp(10);
         autoCard.addView(sp0, sp0l);
 
-        // ===== 等级勾选（关闭时变灰不可点）=====
         boolean enabled = AutoRule.isEnabled();
 
         java.util.Set<String> grades = AutoRule.collectGrades(ruleSet);
         java.util.Map<String, String> colorMap = new java.util.LinkedHashMap<>();
         for (String g : grades) colorMap.put(g, ruleSet.colorOf(g));
 
-        // 自动锁定
         TextView t1 = tv("自动锁定", 13,
                 enabled ? C_TEXT : "#60FFFFFF", true);
         autoCard.addView(t1);
@@ -363,7 +341,6 @@ public class MainActivity extends AppCompatActivity {
         autoCard.addView(d1);
         autoCard.addView(gradeRow(grades, colorMap, true, enabled));
 
-        // 分隔
         View sp = new View(this);
         sp.setBackgroundColor(Color.parseColor("#1AFFFFFF"));
         LinearLayout.LayoutParams spl = new LinearLayout.LayoutParams(
@@ -372,7 +349,6 @@ public class MainActivity extends AppCompatActivity {
         spl.bottomMargin = dp(10);
         autoCard.addView(sp, spl);
 
-        // 自动弃置
         TextView t2 = tv("自动弃置", 13,
                 enabled ? C_TEXT : "#60FFFFFF", true);
         autoCard.addView(t2);
@@ -382,7 +358,6 @@ public class MainActivity extends AppCompatActivity {
         autoCard.addView(d2);
         autoCard.addView(gradeRow(grades, colorMap, false, enabled));
 
-        // 按钮状态
         StringBuilder st = new StringBuilder();
         st.append("锁定键 ").append(RegionStore.describe(RegionStore.TYPE_LOCK));
         st.append("   ·   弃置键 ").append(RegionStore.describe(RegionStore.TYPE_DISCARD));
@@ -391,7 +366,6 @@ public class MainActivity extends AppCompatActivity {
         autoCard.addView(info);
     }
 
-    /** 一行可勾选的等级标签 */
     private LinearLayout gradeRow(java.util.Set<String> grades,
                                   java.util.Map<String, String> colors,
                                   final boolean isLock,
@@ -422,7 +396,7 @@ public class MainActivity extends AppCompatActivity {
             lp.rightMargin = dp(7);
             wrap.addView(chip, lp);
 
-            if (!enabled) continue;   // 关闭时不可点
+            if (!enabled) continue;
 
             chip.setOnClickListener(v -> {
                 boolean now = isLock
@@ -436,8 +410,6 @@ public class MainActivity extends AppCompatActivity {
         }
         return wrap;
     }
-
-    // ==================== UI 组件 ====================
 
     private void section(String s) {
         TextView t = tv(s, 12, C_SUB, true);
